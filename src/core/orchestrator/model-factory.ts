@@ -84,7 +84,7 @@ export function resolveLanguageModel(): ModelResolutionResult {
   }
 
   const groq = createGroq({ apiKey: groqKey });
-  const modelName = explicitModel || process.env.GROQ_MODEL_NAME || 'llama-3.3-70b-versatile';
+  const modelName = explicitModel || process.env.GROQ_MODEL_NAME || 'openai/gpt-oss-20b';
   return {
     model: groq(modelName),
     providerName: 'groq',

@@ -150,8 +150,19 @@ export class ChatOrchestrator {
       createdAtUtc: new Date().toISOString(),
     });
 
+    // History Slicing (TPM optimization):
+    // 1. Filter out old tool invocation/result messages so old heavy search JSON is never re-sent.
+    // 2. Take only the last 3 messages so context window remains lightweight (< 4,200 tokens total).
+    const cleanedHistory: CoreMessage[] = (options.conversationHistory || [])
+      .filter((m) => m.role === 'user' || m.role === 'assistant')
+      .map((m) => ({
+        role: m.role,
+        content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
+      }));
+
+    const slicedHistory = cleanedHistory.slice(-3);
     const messages: CoreMessage[] = [
-      ...(options.conversationHistory || []),
+      ...slicedHistory,
       { role: 'user', content: options.userPrompt },
     ];
 
@@ -159,114 +170,193 @@ export class ChatOrchestrator {
     let firstTokenTime: number | null = null;
     let ttftMs: number | undefined = undefined;
 
-    const stream = streamText({
-      model,
-      system: systemPrompt,
-      messages,
-      tools: {
-        web_search: webSearchTool,
-      },
-      maxSteps: 4,
-      onChunk: ({ chunk }) => {
-        if (firstTokenTime === null && chunk.type === 'text-delta') {
-          firstTokenTime = performance.now();
-          ttftMs = Math.round(firstTokenTime - totalStartTime);
-        }
-      },
-      onStepFinish: (step) => {
-        if (step.toolCalls) {
-          for (const tc of step.toolCalls) {
-            if (tc.toolName === 'web_search') {
-              const args = tc.args as { queries?: string[] };
-              if (args.queries) {
-                for (const q of args.queries) {
-                  if (!executedQueries.includes(q)) executedQueries.push(q);
+    // Helper to extract rate limit wait duration
+    const parseResetDelayMs = (err: unknown): number => {
+      const errorObj = err as Record<string, unknown>;
+      const headers = (errorObj.responseHeaders ||
+        errorObj.headers ||
+        {}) as Record<string, string>;
+
+      const resetTokens = headers['x-ratelimit-reset-tokens'];
+      const retryAfter = headers['retry-after'];
+
+      if (resetTokens) {
+        const parsedSec = parseFloat(resetTokens.replace(/[^\d.]/g, ''));
+        if (!isNaN(parsedSec) && parsedSec > 0) return Math.min(Math.round(parsedSec * 1000) + 500, 15000);
+      }
+      if (retryAfter) {
+        const parsedSec = parseFloat(retryAfter);
+        if (!isNaN(parsedSec) && parsedSec > 0) return Math.min(Math.round(parsedSec * 1000) + 500, 15000);
+      }
+      return 6500; // Default 6.5s rolling window wait
+    };
+
+    const isRateLimitOrTooLarge = (err: unknown): { isMatch: boolean; is413: boolean } => {
+      const errorObj = err as Record<string, unknown>;
+      const status = errorObj.statusCode || errorObj.status;
+      const message = String(errorObj.message || err);
+      const is413 = status === 413 || /Request too large/i.test(message);
+      const is429 = status === 429 || /rate_limit_exceeded|tokens per minute/i.test(message);
+      return { isMatch: is413 || is429, is413 };
+    };
+
+    const runStream = (activeSystemPrompt: string) => {
+      return streamText({
+        model,
+        system: activeSystemPrompt,
+        messages,
+        tools: {
+          web_search: webSearchTool,
+        },
+        maxSteps: 2,
+        maxTokens: 750,
+        onChunk: ({ chunk }) => {
+          if (firstTokenTime === null && chunk.type === 'text-delta') {
+            firstTokenTime = performance.now();
+            ttftMs = Math.round(firstTokenTime - totalStartTime);
+          }
+        },
+        onStepFinish: (step) => {
+          if (step.toolCalls) {
+            for (const tc of step.toolCalls) {
+              if (tc.toolName === 'web_search') {
+                const args = tc.args as { queries?: string[] };
+                if (args.queries) {
+                  for (const q of args.queries) {
+                    if (!executedQueries.includes(q)) executedQueries.push(q);
+                  }
                 }
               }
             }
           }
-        }
-      },
-      onFinish: async (event) => {
-        try {
-          const totalDurationMs = Math.round(performance.now() - totalStartTime);
+        },
+        onFinish: async (event) => {
+          try {
+            const totalDurationMs = Math.round(performance.now() - totalStartTime);
 
-          // Sum scrape duration from events
-          for (const ev of events) {
-            if (ev.phase === 'deep_scrape' && ev.durationMs) {
-              scrapeDurationMs += ev.durationMs;
+            // Sum scrape duration from events
+            for (const ev of events) {
+              if (ev.phase === 'deep_scrape' && ev.durationMs) {
+                scrapeDurationMs += ev.durationMs;
+              }
             }
+
+            const tracePayload: TurnTracePayload = {
+              traceId,
+              sessionId: options.sessionId,
+              userPrompt: options.userPrompt,
+              timestampUtc: new Date().toISOString(),
+              temporalResolution: temporalWindow.hasTemporalReference
+                ? {
+                    raw: temporalWindow.rawExpression || '',
+                    startUtc: temporalWindow.startUtc || '',
+                    endUtc: temporalWindow.endUtc || '',
+                    resolvedDaysAgo: temporalWindow.resolvedDaysAgo,
+                  }
+                : undefined,
+              memoryRecall: {
+                status: recalledContext.recallStatus,
+                rrfMatchedCount:
+                  recalledContext.matchedMessages.length + recalledContext.matchedFacts.length,
+                matchedEntities: recalledContext.matchedFacts.map((f) => f.factText).slice(0, 3),
+                latencyMs: recalledContext.latencyMs,
+              },
+              searchExecution: {
+                queriesExecuted: executedQueries,
+                urlsScraped: Array.from(seenUrls),
+                totalResults: seenUrls.size,
+                latencyMs: searchFanoutDurationMs + scrapeDurationMs,
+              },
+              latencies: {
+                recallMs: recalledContext.latencyMs,
+                searchFanoutMs: searchFanoutDurationMs,
+                scrapeMs: scrapeDurationMs,
+                ttftMs,
+                totalMs: totalDurationMs,
+              },
+              events,
+            };
+
+            // Persist trace to SQLite turn_traces
+            await this.traceLogger.logTrace(tracePayload);
+            options.onTraceComplete?.(tracePayload);
+
+            // Persist assistant reply to SQLite messages
+            await this.memoryWriter.saveMessage({
+              sessionId: options.sessionId,
+              role: 'assistant',
+              content: event.text,
+              createdAtUtc: new Date().toISOString(),
+            });
+
+            // Stage 4: Non-blocking asynchronous post-turn fact extraction
+            extractAndSaveTurnFacts(
+              options.sessionId,
+              options.userPrompt,
+              event.text,
+              this.memoryWriter,
+              new Date().toISOString()
+            ).catch((err) => {
+              console.warn('[Orchestrator] Async fact compaction warning:', err);
+            });
+          } catch (err) {
+            console.error(
+              '[Orchestrator] Post-stream persistence error (trace/message save failed):',
+              err instanceof Error ? err.message : String(err)
+            );
           }
+        },
+      });
+    };
 
-          const tracePayload: TurnTracePayload = {
-            traceId,
-            sessionId: options.sessionId,
-            userPrompt: options.userPrompt,
-            timestampUtc: new Date().toISOString(),
-            temporalResolution: temporalWindow.hasTemporalReference
-              ? {
-                  raw: temporalWindow.rawExpression || '',
-                  startUtc: temporalWindow.startUtc || '',
-                  endUtc: temporalWindow.endUtc || '',
-                  resolvedDaysAgo: temporalWindow.resolvedDaysAgo,
-                }
-              : undefined,
-            memoryRecall: {
-              status: recalledContext.recallStatus,
-              rrfMatchedCount:
-                recalledContext.matchedMessages.length + recalledContext.matchedFacts.length,
-              matchedEntities: recalledContext.matchedFacts.map((f) => f.factText).slice(0, 3),
-              latencyMs: recalledContext.latencyMs,
-            },
-            searchExecution: {
-              queriesExecuted: executedQueries,
-              urlsScraped: Array.from(seenUrls),
-              totalResults: seenUrls.size,
-              latencyMs: searchFanoutDurationMs + scrapeDurationMs,
-            },
-            latencies: {
-              recallMs: recalledContext.latencyMs,
-              searchFanoutMs: searchFanoutDurationMs,
-              scrapeMs: scrapeDurationMs,
-              ttftMs,
-              totalMs: totalDurationMs,
-            },
-            events,
-          };
+    let streamResult: ReturnType<typeof runStream>;
+    try {
+      streamResult = runStream(systemPrompt);
+    } catch (err) {
+      const check = isRateLimitOrTooLarge(err);
+      if (check.isMatch) {
+        const delayMs = parseResetDelayMs(err);
+        const delaySec = Math.round(delayMs / 1000);
+        emitEvent({
+          phase: 'tpm_pacing',
+          status: 'started',
+          detail: `Pacing Groq 8k TPM window, resuming in ${delaySec}s...`,
+          timestamp: new Date().toISOString(),
+        });
 
-          // Persist trace to SQLite turn_traces
-          await this.traceLogger.logTrace(tracePayload);
-          options.onTraceComplete?.(tracePayload);
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
 
-          // Persist assistant reply to SQLite messages
-          await this.memoryWriter.saveMessage({
-            sessionId: options.sessionId,
-            role: 'assistant',
-            content: event.text,
-            createdAtUtc: new Date().toISOString(),
+        let retryPrompt = systemPrompt;
+        if (check.is413) {
+          // Single payload too big: trim historical context by 40%
+          const trimmedLength = Math.round((recalledContext.formattedHistoricalContext?.length || 0) * 0.6);
+          const trimmedHistorical = (recalledContext.formattedHistoricalContext || '').slice(0, trimmedLength);
+          retryPrompt = buildSystemPrompt({
+            currentUtcIso: new Date().toISOString(),
+            temporalWindow,
+            recalledContext: {
+              ...recalledContext,
+              formattedHistoricalContext: trimmedHistorical,
+            },
           });
-
-          // Stage 4: Non-blocking asynchronous post-turn fact extraction
-          extractAndSaveTurnFacts(
-            options.sessionId,
-            options.userPrompt,
-            event.text,
-            this.memoryWriter,
-            new Date().toISOString()
-          ).catch((err) => {
-            console.warn('[Orchestrator] Async fact compaction warning:', err);
-          });
-        } catch (err) {
-          console.error(
-            '[Orchestrator] Post-stream persistence error (trace/message save failed):',
-            err instanceof Error ? err.message : String(err)
-          );
         }
-      },
-    });
+
+        emitEvent({
+          phase: 'tpm_pacing',
+          status: 'completed',
+          detail: 'TPM pacing delay complete, retrying generation turn...',
+          timestamp: new Date().toISOString(),
+          durationMs: delayMs,
+        });
+
+        streamResult = runStream(retryPrompt);
+      } else {
+        throw err;
+      }
+    }
 
     return {
-      stream,
+      stream: streamResult,
       traceId,
       temporalWindow,
       recalledContext,

@@ -88,6 +88,29 @@ export function createWebSearchTool(deps?: Partial<WebSearchToolDependencies>) {
         };
       }
 
+      // Enforce final serialized output budget: strictly <= 5,200 chars (~1,300 tokens)
+      let serialized = JSON.stringify(result);
+      if (serialized.length > 5200) {
+        // Trim lower-ranked snippets and scraped content to stay within budget
+        for (const sub of result.subResults) {
+          for (const item of sub.results) {
+            if (item.snippet && item.snippet.length > 140) {
+              item.snippet = item.snippet.slice(0, 140) + '...';
+            }
+          }
+        }
+        for (const page of result.scrapedPages) {
+          if (page.markdownContent && page.markdownContent.length > 500) {
+            page.markdownContent = page.markdownContent.slice(0, 500) + '... [budget capped]';
+          }
+        }
+        serialized = JSON.stringify(result);
+        if (serialized.length > 5200) {
+          // If still over 5200, retain top scraped page only
+          result.scrapedPages = result.scrapedPages.slice(0, 1);
+        }
+      }
+
       // Emit search metric callback if provided
       deps?.onSearchMetric?.({
         fanoutMs: result.latencyMs,

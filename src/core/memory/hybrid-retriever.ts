@@ -13,9 +13,7 @@ import type {
 const RRF_K = 60;
 const TIME_WEIGHT_BOOST = 2.5;
 const BASE_WEIGHT = 1.0;
-const MAX_CONTEXT_TOKENS = 2500;
-const CHARS_PER_TOKEN = 4;
-const MAX_CONTEXT_CHARS = MAX_CONTEXT_TOKENS * CHARS_PER_TOKEN; // 10,000 chars
+const MAX_CONTEXT_CHARS = 1800; // Strict ~450 token high-density recall cap for 8k TPM Groq envelope
 
 interface DBMessageRow {
   id: string;
@@ -454,6 +452,7 @@ export class HybridMemoryEngine implements IMemoryReader, IMemoryWriter {
       );
     }
 
+    // Prioritize high-density atomic facts first (e.g., shortlists, pricing baselines)
     if (facts.length > 0) {
       lines.push('### DISTILLED ATOMIC FACTS (T0 BASELINE):');
       for (const fact of facts) {
@@ -466,18 +465,23 @@ export class HybridMemoryEngine implements IMemoryReader, IMemoryWriter {
       lines.push('### RECALLED CONVERSATION TRANSCRIPT (T0):');
       for (const msg of messages) {
         const speaker = msg.role === 'user' ? 'User' : 'Assistant';
-        lines.push(`[${msg.createdAtUtc}] ${speaker}: ${msg.content}`);
+        // Truncate assistant historical responses to first 900 chars preserving T0 table/bullets
+        const content =
+          msg.role === 'assistant' && msg.content.length > 900
+            ? `${msg.content.slice(0, 900)}... [T0 baseline truncated]`
+            : msg.content;
+        lines.push(`[${msg.createdAtUtc}] ${speaker}: ${content}`);
       }
     }
 
     lines.push('</historical_context>');
     let formatted = lines.join('\n');
 
-    // Hard cap at MAX_CONTEXT_CHARS (approx 2,500 tokens)
+    // Strict hard cap of 1,800 characters (~450 tokens)
     if (formatted.length > MAX_CONTEXT_CHARS) {
       formatted =
-        formatted.substring(0, MAX_CONTEXT_CHARS - 30) +
-        '\n... [TRUNCATED AT 2500 TOKENS]\n</historical_context>';
+        formatted.substring(0, MAX_CONTEXT_CHARS - 32) +
+        '\n... [TRUNCATED AT 450 TOKENS]\n</historical_context>';
     }
 
     return formatted;

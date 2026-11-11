@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   AlertCircle,
   Loader2,
+  Hourglass,
 } from 'lucide-react';
 import type { PipelinePhaseEvent } from '@/core/contracts/trace.contract';
 
@@ -53,6 +54,16 @@ function PipelineStepperComponent({ events, isStreaming }: PipelineStepperProps)
       icon: FileText,
       event: events.filter((e) => e.phase === 'deep_scrape').slice(-1)[0],
     },
+    ...(events.some((e) => e.phase === 'tpm_pacing')
+      ? [
+          {
+            id: 'tpm_pacing',
+            label: 'TPM Pacing (Groq 8k)',
+            icon: Hourglass,
+            event: events.filter((e) => e.phase === 'tpm_pacing').slice(-1)[0],
+          },
+        ]
+      : []),
   ];
 
   // Active or latest completed event

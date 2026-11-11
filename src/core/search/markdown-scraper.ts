@@ -5,7 +5,51 @@ import { gfm } from 'turndown-plugin-gfm';
 import type { ScrapedPageSummary } from '@/core/contracts/search.contract';
 
 const SCRAPE_TIMEOUT_MS = 3500;
-const MAX_SCRAPED_CHARS = 4800; // Strictly ~1,200 tokens (4 chars/token)
+const MAX_SCRAPED_CHARS = 900; // Strictly ~225 tokens per page for Groq 8k TPM envelope
+
+const PRICING_CHANGE_TOKEN_REGEX =
+  /(\$|€|£|price|pricing|plan|tier|seat|user|mo|month|annual|free|pro|starter|enterprise|changelog|release|launch|shipped|update)/i;
+
+/**
+ * Filters raw markdown to retain only high-signal pricing & changelog content:
+ * - Markdown table rows (/^\|.*\|$/)
+ * - Headings (/^#{1,3}\s/)
+ * - Lines matching pricing/product change tokens
+ */
+export function filterPricingAndChangelogMarkdown(rawMarkdown: string): string {
+  const lines = rawMarkdown.split('\n');
+  const filteredLines: string[] = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    // Retain markdown table rows
+    if (/^\|.*\|$/.test(trimmed)) {
+      filteredLines.push(trimmed);
+      continue;
+    }
+
+    // Retain markdown headings
+    if (/^#{1,3}\s/.test(trimmed)) {
+      filteredLines.push(trimmed);
+      continue;
+    }
+
+    // Retain lines matching pricing/product change tokens
+    if (PRICING_CHANGE_TOKEN_REGEX.test(trimmed)) {
+      filteredLines.push(trimmed);
+    }
+  }
+
+  // If filter returned almost nothing (e.g. non-standard format), fallback to first lines
+  const result =
+    filteredLines.length > 0 ? filteredLines.join('\n') : rawMarkdown.slice(0, MAX_SCRAPED_CHARS);
+
+  return result.length > MAX_SCRAPED_CHARS
+    ? result.slice(0, MAX_SCRAPED_CHARS) + '\n... [Truncated at 900 chars]'
+    : result;
+}
 
 /**
  * Configure Turndown with GitHub Flavored Markdown (GFM)
@@ -167,12 +211,8 @@ export async function scrapeUrlToMarkdown(
       return null;
     }
 
-    // Hard cap at strictly 1,200 tokens (4,800 characters)
-    if (markdown.length > MAX_SCRAPED_CHARS) {
-      markdown =
-        markdown.slice(0, MAX_SCRAPED_CHARS) +
-        '\n\n... [Content truncated at 1,200 tokens / 4,800 characters]';
-    }
+    // Apply Signal-Dense Pricing & Changelog Filter (strictly capped at 900 chars / ~225 tokens)
+    markdown = filterPricingAndChangelogMarkdown(markdown);
 
     const charCount = markdown.length;
     const tokenCountEstimate = Math.ceil(charCount / 4);
@@ -241,11 +281,7 @@ export class MarkdownScraper {
       let markdown = turndownInstance.turndown(rawHtml);
       markdown = markdown.replace(/\n{3,}/g, '\n\n').trim();
 
-      if (markdown.length > MAX_SCRAPED_CHARS) {
-        markdown =
-          markdown.slice(0, MAX_SCRAPED_CHARS) +
-          '\n\n... [Content truncated at 1,200 tokens / 4,800 characters]';
-      }
+      markdown = filterPricingAndChangelogMarkdown(markdown);
 
       const charCount = markdown.length;
       return {

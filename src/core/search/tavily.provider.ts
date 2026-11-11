@@ -169,13 +169,13 @@ export class TavilySearchProvider implements ISearchProvider {
     // Sort candidates descending by score
     candidateUrls.sort((a, b) => b.score - a.score);
 
-    // Pick up to 3 highest-priority unique domains for deep scraping
+    // Pick up to 2 highest-priority unique domains for deep scraping (Groq TPM budget)
     const urlsToScrape: string[] = [];
     const usedDomains = new Set<string>();
 
     if (input.deep_scrape_top_urls !== false) {
       for (const candidate of candidateUrls) {
-        if (urlsToScrape.length >= 3) break;
+        if (urlsToScrape.length >= 2) break;
         if (!usedDomains.has(candidate.domain)) {
           usedDomains.add(candidate.domain);
           urlsToScrape.push(candidate.url);
@@ -183,10 +183,10 @@ export class TavilySearchProvider implements ISearchProvider {
         }
       }
 
-      // If fewer than 3, add remaining candidates
-      if (urlsToScrape.length < 3) {
+      // If fewer than 2, add remaining candidates
+      if (urlsToScrape.length < 2) {
         for (const candidate of candidateUrls) {
-          if (urlsToScrape.length >= 3) break;
+          if (urlsToScrape.length >= 2) break;
           if (!seenUrls.has(candidate.url)) {
             urlsToScrape.push(candidate.url);
             seenUrls.add(candidate.url);
@@ -316,10 +316,10 @@ export class TavilySearchProvider implements ISearchProvider {
           }>;
         };
 
-        const results: SearchResultItem[] = (data.results || []).map((item) => ({
+        const results: SearchResultItem[] = (data.results || []).slice(0, 2).map((item) => ({
           title: item.title || '',
           url: item.url || '',
-          snippet: item.content || '',
+          snippet: (item.content || '').slice(0, 280),
           score: item.score ?? 0.8,
           publishedDate: item.published_date,
         }));
@@ -386,7 +386,7 @@ export class TavilySearchProvider implements ISearchProvider {
       const results: SearchResultItem[] = [];
 
       resultElements.forEach((el) => {
-        if (results.length >= 5) return;
+        if (results.length >= 2) return;
 
         const titleAnchor = el.querySelector('.result__title a') as HTMLAnchorElement | null;
         const snippetEl = el.querySelector('.result__snippet');
@@ -405,7 +405,8 @@ export class TavilySearchProvider implements ISearchProvider {
         }
 
         const title = titleAnchor.textContent?.trim() || '';
-        const snippet = snippetEl?.textContent?.trim() || '';
+        const rawSnippet = snippetEl?.textContent?.trim() || '';
+        const snippet = rawSnippet.slice(0, 280);
 
         if (title && realUrl.startsWith('http')) {
           results.push({

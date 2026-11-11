@@ -7,7 +7,8 @@ export type PipelinePhaseType =
   | 'memory_recall'
   | 'search_fanout'
   | 'deep_scrape'
-  | 'response_synthesis';
+  | 'response_synthesis'
+  | 'tpm_pacing';
 
 export type PipelinePhaseStatus = 'started' | 'completed' | 'failed' | 'info';
 

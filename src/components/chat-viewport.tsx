@@ -179,7 +179,42 @@ function ChatViewportComponent({
                 <p className="whitespace-pre-wrap leading-relaxed">{message.content}</p>
               ) : (
                 <div>
-                  <MarkdownRenderer content={message.content} />
+                  {(() => {
+                    // Extract text from parts if message.content is empty but parts exist
+                    let displayContent = message.content || '';
+                    if (!displayContent.trim() && (message as any).parts) {
+                      const textParts = (message as any).parts
+                        .filter((p: any) => p.type === 'text' && typeof p.text === 'string')
+                        .map((p: any) => p.text);
+                      if (textParts.length > 0) {
+                        displayContent = textParts.join('\n\n');
+                      }
+                    }
+
+                    if (displayContent.trim().length > 0) {
+                      return <MarkdownRenderer content={displayContent} />;
+                    }
+
+                    if (isLoading && isLastAssistant) {
+                      return (
+                        <div className="flex items-center gap-2 py-2 text-xs text-indigo-400 animate-pulse">
+                          <span>Synthesizing verified markdown comparison...</span>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div className="p-3 rounded-xl bg-amber-950/40 border border-amber-800/50 text-amber-300 text-xs flex items-center justify-between">
+                        <span>No synthesis returned for this turn.</span>
+                        <button
+                          onClick={() => onSelectPrompt(messages[idx - 1]?.content || '')}
+                          className="px-2 py-1 bg-amber-900/60 hover:bg-amber-800 rounded font-medium text-[11px] text-amber-200 transition-colors"
+                        >
+                          Retry Turn
+                        </button>
+                      </div>
+                    );
+                  })()}
 
                   {/* Trace details bar */}
                   {latestTrace && isLastAssistant && (

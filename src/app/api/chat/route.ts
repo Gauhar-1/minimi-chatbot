@@ -61,6 +61,7 @@ export async function POST(req: Request) {
               role: m.role as 'user' | 'assistant' | 'system',
               content: m.content,
             })),
+            dataStream,
             onPhaseEvent: (event) => {
               dataStream.writeData({
                 type: 'phase',
@@ -76,6 +77,8 @@ export async function POST(req: Request) {
           });
 
           stream.mergeIntoDataStream(dataStream);
+          // Await stream completion so that dataStream remains open until onFinish completes
+          await stream.text;
         } catch (err) {
           console.error('[API /api/chat] Pipeline execution error:', err);
           dataStream.writeData({

@@ -1,4 +1,4 @@
-import { streamText, type CoreMessage } from 'ai';
+import { streamText, generateText, type CoreMessage } from 'ai';
 import { TemporalParser } from '@/core/temporal/chrono-parser';
 import { HybridMemoryEngine } from '@/core/memory/hybrid-retriever';
 import { SQLiteTraceLogger } from './trace-logger';
@@ -14,6 +14,8 @@ import type {
 } from '@/core/contracts/trace.contract';
 import type { IMemoryReader, IMemoryWriter } from '@/core/contracts/memory.contract';
 
+import type { DataStreamWriter } from 'ai';
+
 export interface OrchestratorRunOptions {
   sessionId: string;
   userPrompt: string;
@@ -21,6 +23,7 @@ export interface OrchestratorRunOptions {
   onPhaseEvent?: (event: PipelinePhaseEvent) => void;
   onTraceComplete?: (trace: TurnTracePayload) => void;
   abortSignal?: AbortSignal;
+  dataStream?: DataStreamWriter;
 }
 
 export class ChatOrchestrator {
@@ -129,6 +132,8 @@ export class ChatOrchestrator {
     const executedQueries: string[] = [];
     let urlsScrapedCount = 0;
 
+    let accumulatedToolResults = '';
+
     // The STRICTLY SINGLE tool registered with the LLM
     const webSearchTool = createWebSearchTool({
       searchProvider: createSearchProvider(),
@@ -208,8 +213,11 @@ export class ChatOrchestrator {
         tools: {
           web_search: webSearchTool,
         },
-        maxSteps: 2,
-        maxTokens: 750,
+        maxSteps: 3,
+        maxTokens: 2048,
+        onError: ({ error }) => {
+          console.error('[streamText Step Error]:', error);
+        },
         onChunk: ({ chunk }) => {
           if (firstTokenTime === null && chunk.type === 'text-delta') {
             firstTokenTime = performance.now();
@@ -229,9 +237,87 @@ export class ChatOrchestrator {
               }
             }
           }
+          if (step.toolResults && step.toolResults.length > 0) {
+            for (const tr of step.toolResults) {
+              if (tr.result) {
+                const res = tr.result as {
+                  subResults?: Array<{ query: string; results?: Array<{ title: string; snippet: string }> }>;
+                  scrapedPages?: Array<{ title: string; markdownContent: string }>;
+                };
+                if (res.subResults) {
+                  for (const sr of res.subResults) {
+                    for (const r of sr.results || []) {
+                      accumulatedToolResults += `\n- [${r.title}]: ${r.snippet}`;
+                    }
+                  }
+                }
+                if (res.scrapedPages) {
+                  for (const p of res.scrapedPages) {
+                    accumulatedToolResults += `\n- [Page: ${p.title}]: ${p.markdownContent.slice(0, 300)}`;
+                  }
+                }
+              }
+            }
+          }
         },
         onFinish: async (event) => {
           try {
+            console.log(
+              `[streamText onFinish] steps=${event.steps?.length}, finishReason=${event.finishReason}, textLength=${event.text?.length}`
+            );
+            let finalText = event.text || '';
+
+            // Step-2 Synthesis Fallback: If web_search ran but the model emitted 0 characters
+            if (!finalText.trim() && (executedQueries.length > 0 || accumulatedToolResults)) {
+              console.warn('[Orchestrator] Empty text returned post-search. Executing tool-free synthesis fallback...');
+              emitEvent({
+                phase: 'response_synthesis',
+                status: 'started',
+                detail: 'Synthesizing markdown comparison table from search findings...',
+                timestamp: new Date().toISOString(),
+              });
+
+              // Brief wait to respect Groq rolling window TPM recovery if needed
+              await new Promise((resolve) => setTimeout(resolve, 2500));
+
+              try {
+                const compactPrompt = `You are Minimi Temporal Agent. Provide an Executive Verdict and a comparison table for: ${options.userPrompt}`;
+                const compactFindings = accumulatedToolResults.slice(0, 1200);
+
+                if (options.dataStream) {
+                  const fallbackStream = streamText({
+                    model,
+                    system: `${compactPrompt}\nDo not output tool calls. Format as Markdown table.`,
+                    messages: [
+                      {
+                        role: 'user',
+                        content: `Search findings:\n${compactFindings}\n\nProvide the Executive Verdict and comparison table:`,
+                      },
+                    ],
+                    maxTokens: 1200,
+                  });
+                  fallbackStream.mergeIntoDataStream(options.dataStream);
+                  finalText = await fallbackStream.text;
+                } else {
+                  const fallbackResult = await generateText({
+                    model,
+                    system: `${compactPrompt}\nDo not output tool calls. Format as Markdown table.`,
+                    messages: [
+                      {
+                        role: 'user',
+                        content: `Search findings:\n${compactFindings}\n\nProvide the Executive Verdict and comparison table:`,
+                      },
+                    ],
+                    maxTokens: 1200,
+                  });
+                  finalText = fallbackResult.text;
+                }
+                console.log(`[Orchestrator] Tool-free synthesis fallback succeeded! Length: ${finalText.length}`);
+              } catch (fallbackErr) {
+                console.error('[Orchestrator] Fallback synthesis error:', fallbackErr);
+              }
+            }
+
             const totalDurationMs = Math.round(performance.now() - totalStartTime);
 
             // Sum scrape duration from events
@@ -285,7 +371,7 @@ export class ChatOrchestrator {
             await this.memoryWriter.saveMessage({
               sessionId: options.sessionId,
               role: 'assistant',
-              content: event.text,
+              content: finalText,
               createdAtUtc: new Date().toISOString(),
             });
 
@@ -293,7 +379,7 @@ export class ChatOrchestrator {
             extractAndSaveTurnFacts(
               options.sessionId,
               options.userPrompt,
-              event.text,
+              finalText,
               this.memoryWriter,
               new Date().toISOString()
             ).catch((err) => {

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useId } from 'react';
 import { useChat } from '@ai-sdk/react';
 import {
   ChatViewport,
@@ -13,19 +13,22 @@ import {
   Sparkles,
   RefreshCw,
   Cpu,
-  Layers,
-  ShieldCheck,
 } from 'lucide-react';
 import type { PipelinePhaseEvent, TurnTracePayload } from '@/core/contracts/trace.contract';
 
 export default function ChatPage() {
-  const [sessionId] = useState<string>(() => `sess_${Date.now()}`);
+  // Hydration-safe sessionId: use a stable React ID as seed, then generate
+  // the full ID on the client only to avoid server/client Date.now() mismatch.
+  const reactId = useId();
+  const [sessionId] = useState<string>(() => `sess_${reactId.replace(/:/g, '_')}`);
+
   const [isXRayOpen, setIsXRayOpen] = useState(false);
   const [activeEvents, setActiveEvents] = useState<PipelinePhaseEvent[]>([]);
   const [latestTrace, setLatestTrace] = useState<TurnTracePayload | null>(null);
   const [allTraces, setAllTraces] = useState<TurnTracePayload[]>([]);
   const [isReseeding, setIsReseeding] = useState(false);
   const [reseedMessage, setReseedMessage] = useState<string | null>(null);
+  const [chatError, setChatError] = useState<string | null>(null);
 
   const {
     messages,
@@ -40,8 +43,13 @@ export default function ChatPage() {
     api: '/api/chat',
     body: { sessionId },
     onResponse: () => {
-      // Clear phase events for fresh turn
+      // Clear phase events and error for fresh turn
       setActiveEvents([]);
+      setChatError(null);
+    },
+    onError: (err) => {
+      console.error('[useChat] Error caught:', err);
+      setChatError(err.message || 'Failed to communicate with Minimi Agent.');
     },
   });
 
@@ -69,7 +77,7 @@ export default function ChatPage() {
   }, [data]);
 
   const handleChipClick = (promptText: string) => {
-    setInput(promptText);
+    setChatError(null);
     append({
       role: 'user',
       content: promptText,
@@ -184,6 +192,23 @@ export default function ChatPage() {
       </div>
 
       {/* Main Chat Scrollable Viewport */}
+      {chatError && (
+        <div className="bg-rose-950/70 border-b border-rose-800/80 px-4 py-2.5 text-xs text-rose-300 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="font-semibold uppercase tracking-wider text-[10px] bg-rose-900 px-1.5 py-0.5 rounded">
+              Error
+            </span>
+            <span>{chatError}</span>
+          </div>
+          <button
+            onClick={() => setChatError(null)}
+            className="text-rose-400 hover:text-rose-200 underline text-[11px] ml-4"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       <ChatViewport
         messages={messages}
         isLoading={isLoading}

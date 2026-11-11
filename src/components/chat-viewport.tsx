@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, memo } from 'react';
 import type { Message } from 'ai';
 import { MarkdownRenderer } from './markdown-renderer';
 import { PipelineStepper } from './pipeline-stepper';
@@ -51,7 +51,7 @@ interface ChatViewportProps {
   onSelectPrompt: (prompt: string) => void;
 }
 
-export function ChatViewport({
+function ChatViewportComponent({
   messages,
   isLoading,
   activeEvents,
@@ -236,3 +236,5 @@ export function ChatViewport({
     </div>
   );
 }
+
+export const ChatViewport = memo(ChatViewportComponent);

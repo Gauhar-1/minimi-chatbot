@@ -1,21 +1,41 @@
 import { createDataStreamResponse, type Message, type JSONValue } from 'ai';
+import { z } from 'zod';
 import { ChatOrchestrator } from '@/core/orchestrator/chat-orchestrator';
 import { ensureDatabaseSeeded } from '@/core/memory/auto-seeder';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+const ChatRequestSchema = z.object({
+  messages: z.array(z.object({
+    id: z.string().optional(),
+    role: z.enum(['user', 'assistant', 'system', 'data', 'tool']),
+    content: z.string(),
+    createdAt: z.unknown().optional(),
+  }).passthrough()).default([]),
+  sessionId: z.string().optional(),
+});
+
 export async function POST(req: Request) {
   // Cold-start self-healing: automatically seed if database is empty
   await ensureDatabaseSeeded();
 
   try {
-    const body = (await req.json()) as {
-      messages?: Message[];
-      sessionId?: string;
-    };
+    const rawBody: unknown = await req.json();
+    const parseResult = ChatRequestSchema.safeParse(rawBody);
 
-    const messages = body.messages || [];
+    if (!parseResult.success) {
+      return new Response(
+        JSON.stringify({
+          error: 'Invalid request payload',
+          details: parseResult.error.issues.map((i) => i.message).join('; '),
+        }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const body = parseResult.data;
+    const messages = body.messages as Message[];
     const sessionId =
       body.sessionId || `session_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
@@ -70,6 +90,10 @@ export async function POST(req: Request) {
             error: err instanceof Error ? err.message : String(err),
           } as unknown as JSONValue);
         }
+      },
+      onError: (err) => {
+        console.error('[API /api/chat] Stream-level error:', err);
+        return err instanceof Error ? err.message : 'An unexpected error occurred during streaming.';
       },
     });
   } catch (err) {

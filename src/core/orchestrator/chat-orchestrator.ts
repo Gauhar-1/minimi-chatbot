@@ -188,73 +188,80 @@ export class ChatOrchestrator {
         }
       },
       onFinish: async (event) => {
-        const totalDurationMs = Math.round(performance.now() - totalStartTime);
+        try {
+          const totalDurationMs = Math.round(performance.now() - totalStartTime);
 
-        // Sum scrape duration from events
-        for (const ev of events) {
-          if (ev.phase === 'deep_scrape' && ev.durationMs) {
-            scrapeDurationMs += ev.durationMs;
+          // Sum scrape duration from events
+          for (const ev of events) {
+            if (ev.phase === 'deep_scrape' && ev.durationMs) {
+              scrapeDurationMs += ev.durationMs;
+            }
           }
+
+          const tracePayload: TurnTracePayload = {
+            traceId,
+            sessionId: options.sessionId,
+            userPrompt: options.userPrompt,
+            timestampUtc: new Date().toISOString(),
+            temporalResolution: temporalWindow.hasTemporalReference
+              ? {
+                  raw: temporalWindow.rawExpression || '',
+                  startUtc: temporalWindow.startUtc || '',
+                  endUtc: temporalWindow.endUtc || '',
+                  resolvedDaysAgo: temporalWindow.resolvedDaysAgo,
+                }
+              : undefined,
+            memoryRecall: {
+              status: recalledContext.recallStatus,
+              rrfMatchedCount:
+                recalledContext.matchedMessages.length + recalledContext.matchedFacts.length,
+              matchedEntities: recalledContext.matchedFacts.map((f) => f.factText).slice(0, 3),
+              latencyMs: recalledContext.latencyMs,
+            },
+            searchExecution: {
+              queriesExecuted: executedQueries,
+              urlsScraped: Array.from(seenUrls),
+              totalResults: seenUrls.size,
+              latencyMs: searchFanoutDurationMs + scrapeDurationMs,
+            },
+            latencies: {
+              recallMs: recalledContext.latencyMs,
+              searchFanoutMs: searchFanoutDurationMs,
+              scrapeMs: scrapeDurationMs,
+              ttftMs,
+              totalMs: totalDurationMs,
+            },
+            events,
+          };
+
+          // Persist trace to SQLite turn_traces
+          await this.traceLogger.logTrace(tracePayload);
+          options.onTraceComplete?.(tracePayload);
+
+          // Persist assistant reply to SQLite messages
+          await this.memoryWriter.saveMessage({
+            sessionId: options.sessionId,
+            role: 'assistant',
+            content: event.text,
+            createdAtUtc: new Date().toISOString(),
+          });
+
+          // Stage 4: Non-blocking asynchronous post-turn fact extraction
+          extractAndSaveTurnFacts(
+            options.sessionId,
+            options.userPrompt,
+            event.text,
+            this.memoryWriter,
+            new Date().toISOString()
+          ).catch((err) => {
+            console.warn('[Orchestrator] Async fact compaction warning:', err);
+          });
+        } catch (err) {
+          console.error(
+            '[Orchestrator] Post-stream persistence error (trace/message save failed):',
+            err instanceof Error ? err.message : String(err)
+          );
         }
-
-        const tracePayload: TurnTracePayload = {
-          traceId,
-          sessionId: options.sessionId,
-          userPrompt: options.userPrompt,
-          timestampUtc: new Date().toISOString(),
-          temporalResolution: temporalWindow.hasTemporalReference
-            ? {
-                raw: temporalWindow.rawExpression || '',
-                startUtc: temporalWindow.startUtc || '',
-                endUtc: temporalWindow.endUtc || '',
-                resolvedDaysAgo: temporalWindow.resolvedDaysAgo,
-              }
-            : undefined,
-          memoryRecall: {
-            status: recalledContext.recallStatus,
-            rrfMatchedCount:
-              recalledContext.matchedMessages.length + recalledContext.matchedFacts.length,
-            matchedEntities: recalledContext.matchedFacts.map((f) => f.factText).slice(0, 3),
-            latencyMs: recalledContext.latencyMs,
-          },
-          searchExecution: {
-            queriesExecuted: executedQueries,
-            urlsScraped: Array.from(seenUrls),
-            totalResults: seenUrls.size,
-            latencyMs: searchFanoutDurationMs + scrapeDurationMs,
-          },
-          latencies: {
-            recallMs: recalledContext.latencyMs,
-            searchFanoutMs: searchFanoutDurationMs,
-            scrapeMs: scrapeDurationMs,
-            ttftMs,
-            totalMs: totalDurationMs,
-          },
-          events,
-        };
-
-        // Persist trace to SQLite turn_traces
-        await this.traceLogger.logTrace(tracePayload);
-        options.onTraceComplete?.(tracePayload);
-
-        // Persist assistant reply to SQLite messages
-        await this.memoryWriter.saveMessage({
-          sessionId: options.sessionId,
-          role: 'assistant',
-          content: event.text,
-          createdAtUtc: new Date().toISOString(),
-        });
-
-        // Stage 4: Non-blocking asynchronous post-turn fact extraction
-        extractAndSaveTurnFacts(
-          options.sessionId,
-          options.userPrompt,
-          event.text,
-          this.memoryWriter,
-          new Date().toISOString()
-        ).catch((err) => {
-          console.warn('[Orchestrator] Async fact compaction warning:', err);
-        });
       },
     });
 

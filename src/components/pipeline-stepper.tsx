@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { memo } from 'react';
 import {
   Calendar,
   Database,
@@ -17,7 +17,7 @@ interface PipelineStepperProps {
   isStreaming?: boolean;
 }
 
-export function PipelineStepper({ events, isStreaming }: PipelineStepperProps) {
+function PipelineStepperComponent({ events, isStreaming }: PipelineStepperProps) {
   if (!events || events.length === 0) {
     if (!isStreaming) return null;
     return (
@@ -123,3 +123,5 @@ export function PipelineStepper({ events, isStreaming }: PipelineStepperProps) {
     </div>
   );
 }
+
+export const PipelineStepper = memo(PipelineStepperComponent);

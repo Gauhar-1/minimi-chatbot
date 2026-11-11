@@ -125,8 +125,10 @@ export class HybridMemoryEngine implements IMemoryReader, IMemoryWriter {
             .filter((w) => w.length >= 2);
 
     if (keywords.length > 0) {
+      // Sanitize keywords for FTS5: strip internal quotes and escape special characters
       const sanitizedFtsQuery = keywords
-        .filter((k) => /^[a-zA-Z0-9_-]+$/.test(k))
+        .map((k) => k.replace(/["*]/g, '').trim())
+        .filter((k) => k.length >= 2)
         .map((k) => `"${k}"`)
         .join(' OR ');
 

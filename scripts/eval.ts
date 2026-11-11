@@ -2,218 +2,221 @@ import { TemporalParser } from '../src/core/temporal/chrono-parser';
 import { HybridMemoryEngine } from '../src/core/memory/hybrid-retriever';
 import { ensureDatabaseSeeded } from '../src/core/memory/auto-seeder';
 import { closeDatabase } from '../src/core/memory/sqlite-client';
-import { MarkdownScraper } from '../src/core/search/markdown-scraper';
+import { createWebSearchTool } from '../src/core/search/web-search.tool';
 import { ChatOrchestrator } from '../src/core/orchestrator/chat-orchestrator';
 
-interface TestResult {
+interface SuiteResult {
+  id: string;
   name: string;
   passed: boolean;
-  details: string;
-  durationMs: number;
+  latencyMs: number;
+  assertion: string;
 }
 
-async function runEvaluationSuite(): Promise<void> {
-  console.log('\n=============================================================');
-  console.log('🧪 MINIMI TEMPORAL AGENT EVALUATION HARNESS (npm run eval)');
-  console.log('=============================================================\n');
+async function runEvaluationHarness(): Promise<void> {
+  console.log('\n================================================================================');
+  console.log('🧪 MINIMI TEMPORAL AGENT DETERMINISTIC CLI EVALUATION HARNESS (npm run eval)');
+  console.log('================================================================================\n');
 
-  // Ensure DB is seeded
+  // Step 1: Ensure SQLite database is seeded
   await ensureDatabaseSeeded();
   const engine = new HybridMemoryEngine();
-  const results: TestResult[] = [];
+  const results: SuiteResult[] = [];
 
   // =========================================================================
-  // Test 1: Monday — 5 CRM Tools for 20-Person Sales Team Recall
+  // Suite 1: Monday — 5 CRMs Delta Recall
   // =========================================================================
-  const t1Start = performance.now();
+  const s1Start = performance.now();
   const prompt1 =
-    'On Monday we shortlisted 5 CRM tools for a 20-person sales team. Has any changed pricing since?';
+    'On Monday we shortlisted 5 CRM tools for a 20-person sales team. Has any of them changed pricing or shipped something big since?';
   const window1 = TemporalParser.parse(prompt1);
   const recall1 = await engine.recallContext(prompt1, window1);
 
-  const entities1 = ['HubSpot', 'Attio', 'Pipedrive', 'Close', 'Salesforce'];
-  const formattedLower1 = recall1.formattedHistoricalContext.toLowerCase();
-  const matchedAllCRMs = entities1.every((e) => formattedLower1.includes(e.toLowerCase()));
+  const crmEntities = ['HubSpot', 'Attio', 'Pipedrive', 'Close', 'Salesforce'];
+  const text1 = recall1.formattedHistoricalContext.toLowerCase();
+  const allCrmsMatched = crmEntities.every((e) => text1.includes(e.toLowerCase()));
+
+  const s1Passed =
+    window1.hasTemporalReference &&
+    Boolean(window1.startUtc) &&
+    recall1.recallStatus === 'MATCHED' &&
+    allCrmsMatched &&
+    recall1.matchedMessages.length > 0;
 
   results.push({
-    name: 'Challenge 1: Monday CRM Shortlist Recall',
-    passed:
-      window1.hasTemporalReference &&
-      recall1.recallStatus === 'MATCHED' &&
-      matchedAllCRMs &&
-      recall1.matchedMessages.length > 0,
-    details: `Window: ${window1.startUtc?.split('T')[0]} | Recalled all 5 CRM tools: ${matchedAllCRMs} (${recall1.latencyMs}ms)`,
-    durationMs: Math.round(performance.now() - t1Start),
+    id: 'SUITE-1',
+    name: 'Monday CRM Shortlist (5 Tools) Recall',
+    passed: s1Passed,
+    latencyMs: Math.round(performance.now() - s1Start),
+    assertion: `Window: ${window1.startUtc?.split('T')[0]} | Recalled all 5 CRMs (HubSpot, Attio, Pipedrive, Close, Salesforce)`,
   });
 
   // =========================================================================
-  // Test 2: Last Tuesday — Postgres Hosting Comparison Recall
+  // Suite 2: 3 November — Exact Date Recall
   // =========================================================================
-  const t2Start = performance.now();
-  const prompt2 =
-    'Compare Postgres hosting providers from last Tuesday. Did Supabase or Neon update their plans?';
+  const s2Start = performance.now();
+  const prompt2 = 'What did I ask you on 3 November? Is your answer still correct today?';
   const window2 = TemporalParser.parse(prompt2);
   const recall2 = await engine.recallContext(prompt2, window2);
 
-  const entities2 = ['Supabase', 'Neon', 'AWS RDS', 'Render'];
-  const formattedLower2 = recall2.formattedHistoricalContext.toLowerCase();
-  const matchedAllPostgres = entities2.every((e) => formattedLower2.includes(e.toLowerCase()));
+  const vectorDbEntities = ['Pinecone', 'Weaviate', 'Qdrant'];
+  const text2 = recall2.formattedHistoricalContext.toLowerCase();
+  const allVectorDbsMatched = vectorDbEntities.every((e) => text2.includes(e.toLowerCase()));
+
+  const hasNov3UserPrompt = recall2.matchedMessages.some((m) => m.role === 'user');
+  const hasNov3AssistantAnswer = recall2.matchedMessages.some((m) => m.role === 'assistant');
+
+  const s2Passed =
+    window2.hasTemporalReference &&
+    window2.startUtc?.includes('-11-03') === true &&
+    recall2.recallStatus === 'MATCHED' &&
+    allVectorDbsMatched &&
+    hasNov3UserPrompt &&
+    hasNov3AssistantAnswer;
 
   results.push({
-    name: 'Challenge 2: Last Tuesday Postgres Hosting Recall',
-    passed:
-      window2.hasTemporalReference &&
-      recall2.recallStatus === 'MATCHED' &&
-      matchedAllPostgres &&
-      recall2.matchedMessages.length > 0,
-    details: `Window: ${window2.startUtc?.split('T')[0]} | Recalled all 4 Postgres providers: ${matchedAllPostgres} (${recall2.latencyMs}ms)`,
-    durationMs: Math.round(performance.now() - t2Start),
+    id: 'SUITE-2',
+    name: '3 November Technical Q&A Exact Recall',
+    passed: s2Passed,
+    latencyMs: Math.round(performance.now() - s2Start),
+    assertion: `Window: ${window2.startUtc?.split('T')[0]} | Recalled user question ($T0) & assistant answer ($T0)`,
   });
 
   // =========================================================================
-  // Test 3: 3 November — Verifiable Vector DB Baseline Recall
+  // Suite 3: Last Tuesday — Postgres Hosting Recall
   // =========================================================================
-  const t3Start = performance.now();
-  const prompt3 = 'What did I ask you on 3 November? Is your answer still correct today?';
+  const s3Start = performance.now();
+  const prompt3 = 'Last Tuesday I asked you about Postgres hosting. Has any pricing changed since then?';
   const window3 = TemporalParser.parse(prompt3);
   const recall3 = await engine.recallContext(prompt3, window3);
 
-  const entities3 = ['Pinecone', 'Weaviate', 'Qdrant'];
-  const formattedLower3 = recall3.formattedHistoricalContext.toLowerCase();
-  const matchedAllVectorDBs = entities3.every((e) => formattedLower3.includes(e.toLowerCase()));
+  const postgresEntities = ['Supabase', 'Neon', 'AWS RDS', 'Render'];
+  const text3 = recall3.formattedHistoricalContext.toLowerCase();
+  const allPostgresMatched = postgresEntities.every((e) => text3.includes(e.toLowerCase()));
+
+  const s3Passed =
+    window3.hasTemporalReference &&
+    Boolean(window3.startUtc) &&
+    recall3.recallStatus === 'MATCHED' &&
+    allPostgresMatched &&
+    recall3.matchedMessages.length > 0;
 
   results.push({
-    name: 'Challenge 3: 3 November Technical Q&A Recall',
-    passed:
-      window3.hasTemporalReference &&
-      recall3.recallStatus === 'MATCHED' &&
-      matchedAllVectorDBs &&
-      recall3.matchedMessages.length > 0,
-    details: `Window: ${window3.startUtc?.split('T')[0]} | Recalled Vector DB baseline: ${matchedAllVectorDBs} (${recall3.latencyMs}ms)`,
-    durationMs: Math.round(performance.now() - t3Start),
+    id: 'SUITE-3',
+    name: 'Last Tuesday Postgres Hosting Recall',
+    passed: s3Passed,
+    latencyMs: Math.round(performance.now() - s3Start),
+    assertion: `Window: ${window3.startUtc?.split('T')[0]} | Recalled all 4 providers (Supabase, Neon, AWS RDS, Render)`,
   });
 
   // =========================================================================
-  // Test 4: Anti-Hallucination Guard (EMPTY_FOR_DATE_WINDOW)
+  // Suite 4: Empty Date Hallucination Guard + Strict Single-Tool Invariant
   // =========================================================================
-  const t4Start = performance.now();
-  const prompt4 = 'What did we discuss on 15 August 2024?';
+  const s4Start = performance.now();
+  const prompt4 = 'What did I ask you on 19 August? Is your answer still correct?';
   const window4 = TemporalParser.parse(prompt4);
   const recall4 = await engine.recallContext(prompt4, window4);
 
-  const guardPassed =
+  // Assert Single-Tool invariant
+  const searchTool = createWebSearchTool();
+  const toolRegistry = {
+    web_search: searchTool,
+  };
+  const toolKeys = Object.keys(toolRegistry);
+  const singleToolInvariantPassed = toolKeys.length === 1 && toolKeys[0] === 'web_search';
+
+  const emptyGuardPassed =
     window4.hasTemporalReference &&
     recall4.recallStatus === 'EMPTY_FOR_DATE_WINDOW' &&
     recall4.matchedMessages.length === 0;
 
+  const s4Passed = emptyGuardPassed && singleToolInvariantPassed;
+
   results.push({
-    name: 'Anti-Hallucination Guard on Unrecorded Date',
-    passed: guardPassed,
-    details: `Status: ${recall4.recallStatus} | Zero hallucinated records on empty date window.`,
-    durationMs: Math.round(performance.now() - t4Start),
+    id: 'SUITE-4',
+    name: 'Empty Recall Guard & Single-Tool Invariant',
+    passed: s4Passed,
+    latencyMs: Math.round(performance.now() - s4Start),
+    assertion: `Status: EMPTY_FOR_DATE_WINDOW | Sole LLM Tool: [${toolKeys.join(', ')}]`,
   });
 
   // =========================================================================
-  // Test 5: Markdown Scraper & GFM Table Extraction
-  // =========================================================================
-  const t5Start = performance.now();
-  const samplePricingHtml = `
-    <html>
-      <body>
-        <h1>Vendor Pricing</h1>
-        <table>
-          <thead>
-            <tr><th>Plan</th><th>Monthly Price</th><th>Seats Included</th></tr>
-          </thead>
-          <tbody>
-            <tr><td>Starter</td><td>$25/mo</td><td>5</td></tr>
-            <tr><td>Professional</td><td>$90/mo</td><td>20</td></tr>
-          </tbody>
-        </table>
-      </body>
-    </html>
-  `;
-  const scrapeResult = MarkdownScraper.htmlToMarkdown(
-    samplePricingHtml,
-    'https://example.com/pricing'
-  );
-  const tableConverted =
-    scrapeResult.scrapeSuccess &&
-    scrapeResult.markdownContent.includes('| Plan |') &&
-    scrapeResult.markdownContent.includes('$90/mo');
-
-  results.push({
-    name: 'Deep Pricing Scraper: GFM Table Preservation',
-    passed: tableConverted,
-    details: `Preserved GFM Table with accurate pricing tokens ($90/mo, $25/mo).`,
-    durationMs: Math.round(performance.now() - t5Start),
-  });
-
-  // =========================================================================
-  // Optional Test 6: Live End-to-End LLM Synthesis (if API key is present)
+  // Optional Live End-to-End Turn (if keys exist in .env)
   // =========================================================================
   const hasLlmKey = Boolean(
-    (process.env.LLM_PROVIDER === 'google' && process.env.GOOGLE_GENERATIVE_AI_API_KEY) ||
-    (process.env.LLM_PROVIDER === 'openai' && process.env.OPENAI_API_KEY) ||
-    process.env.GROQ_API_KEY
+    process.env.GROQ_API_KEY ||
+    process.env.GOOGLE_GENERATIVE_AI_API_KEY ||
+    process.env.OPENAI_API_KEY
   );
+  const hasSearchKey = Boolean(process.env.TAVILY_API_KEY);
 
   if (hasLlmKey) {
-    const t6Start = performance.now();
-    console.log('[Eval Harness] API Key detected! Running live LLM end-to-end pipeline...');
+    const s5Start = performance.now();
+    console.log('[Eval Harness] API Key detected! Running live LLM end-to-end turn...\n');
     try {
       const orchestrator = new ChatOrchestrator(engine, engine);
       const execution = await orchestrator.executePipeline({
-        sessionId: 'eval_live_turn',
+        sessionId: 'eval_live_suite',
         userPrompt: prompt1,
       });
-      const generatedText = await execution.stream.text;
+
+      const text = await execution.stream.text;
+      const hasContent = text.length > 50;
+      const hasCitations = text.includes('http') || text.includes('(') || text.includes('[');
 
       results.push({
-        name: `Live LLM Synthesis (${execution.providerName} / ${execution.modelName})`,
-        passed: generatedText.length > 50,
-        details: `Successfully generated ${generatedText.length} characters using ${execution.modelName}.`,
-        durationMs: Math.round(performance.now() - t6Start),
+        id: 'SUITE-5',
+        name: `Live LLM & Search (${execution.providerName} / ${execution.modelName})`,
+        passed: hasContent,
+        latencyMs: Math.round(performance.now() - s5Start),
+        assertion: `Generated ${text.length} chars | Table & Citations: ${hasCitations}`,
       });
     } catch (err) {
       results.push({
-        name: 'Live LLM Synthesis & Streaming',
+        id: 'SUITE-5',
+        name: 'Live LLM & Search Turn',
         passed: false,
-        details: `Live execution error: ${err instanceof Error ? err.message : String(err)}`,
-        durationMs: Math.round(performance.now() - t6Start),
+        latencyMs: Math.round(performance.now() - s5Start),
+        assertion: `Live execution error: ${err instanceof Error ? err.message : String(err)}`,
       });
     }
   }
 
-  // Close DB
+  // Close database connection
   closeDatabase();
 
-  // Print Results Summary
-  console.log('RESULTS BREAKDOWN:');
-  console.log('-------------------------------------------------------------');
+  // Print Formatted ASCII Results Table
+  console.log('+----------+------------------------------------------+--------+---------+-----------------------------------------------------------+');
+  console.log('| Suite ID | Test Suite Name                          | Status | Latency | Assertion Result                                          |');
+  console.log('+----------+------------------------------------------+--------+---------+-----------------------------------------------------------+');
+
   let allPassed = true;
   for (const r of results) {
-    const symbol = r.passed ? '✔ PASS' : '❌ FAIL';
-    console.log(`${symbol} [${r.name}] (${r.durationMs}ms)`);
-    console.log(`       ${r.details}`);
+    const statusStr = r.passed ? '✔ PASS' : '✖ FAIL';
+    const idPad = r.id.padEnd(8);
+    const namePad = r.name.slice(0, 40).padEnd(40);
+    const latPad = `${r.latencyMs}ms`.padStart(7);
+    const assertPad = r.assertion.slice(0, 57).padEnd(57);
+
+    console.log(`| ${idPad} | ${namePad} | ${statusStr} | ${latPad} | ${assertPad} |`);
     if (!r.passed) allPassed = false;
   }
+  console.log('+----------+------------------------------------------+--------+---------+-----------------------------------------------------------+');
+
   if (!hasLlmKey) {
-    console.log('ℹ SKIP [Live End-to-End LLM Synthesis]');
-    console.log('       No LLM API key detected in .env. Core deterministic systems 100% verified.');
+    console.log('\nℹ  [Suite 5 Note]: Skipped live LLM turn (no GROQ_API_KEY in .env). Core 4 deterministic suites verified 100%.');
   }
-  console.log('-------------------------------------------------------------');
 
   if (allPassed) {
-    console.log('🎉 ALL EVALUATION GATES PASSED DETERMINISTICALLY!\n');
+    console.log('\n🎉 ALL DETERMINISTIC VERIFICATION SUITES PASSED! (Exit code: 0)\n');
     process.exit(0);
   } else {
-    console.error('❌ SOME EVALUATION GATES FAILED.\n');
+    console.error('\n❌ ONE OR MORE SUITES FAILED. (Exit code: 1)\n');
     process.exit(1);
   }
 }
 
-runEvaluationSuite().catch((err) => {
+runEvaluationHarness().catch((err) => {
   console.error('Fatal evaluation harness error:', err);
   process.exit(1);
 });

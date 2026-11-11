@@ -1,39 +1,22 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useChat } from '@ai-sdk/react';
-import { ChatViewport } from '@/components/chat-viewport';
+import {
+  ChatViewport,
+  MINIMI_CHALLENGE_PROMPTS,
+} from '@/components/chat-viewport';
 import { XRayTraceDrawer } from '@/components/xray-trace-drawer';
 import {
   Activity,
   Send,
   Sparkles,
   RefreshCw,
-  Clock,
-  ExternalLink,
+  Cpu,
+  Layers,
+  ShieldCheck,
 } from 'lucide-react';
 import type { PipelinePhaseEvent, TurnTracePayload } from '@/core/contracts/trace.contract';
-
-const CHALLENGE_PROMPTS = [
-  {
-    id: 'monday_crm',
-    label: 'Monday: 5 CRM Tools Pricing Delta',
-    prompt:
-      'On Monday we shortlisted 5 CRM tools for a 20-person sales team. Has any changed pricing since?',
-  },
-  {
-    id: 'tuesday_postgres',
-    label: 'Last Tuesday: Postgres Hosting Plans',
-    prompt:
-      'Compare Postgres hosting providers from last Tuesday. Did Supabase or Neon update their plans?',
-  },
-  {
-    id: 'nov3_vectordb',
-    label: '3 November: Verifiable Baseline',
-    prompt:
-      'What did I ask you on 3 November? Is your answer still correct today?',
-  },
-];
 
 export default function ChatPage() {
   const [sessionId] = useState<string>(() => `sess_${Date.now()}`);
@@ -93,47 +76,59 @@ export default function ChatPage() {
     });
   };
 
+  const handleReseed = async () => {
+    setIsReseeding(true);
+    try {
+      const res = await fetch('/api/traces', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'reseed' }),
+      });
+      if (res.ok) {
+        setReseedMessage('Seeded!');
+        setTimeout(() => setReseedMessage(null), 3000);
+      }
+    } catch (err) {
+      console.error('Failed to reseed:', err);
+    } finally {
+      setIsReseeding(false);
+    }
+  };
+
+  // Compute active turn search + recall latency metric for the header pill
+  const activeLatencyBadge = latestTrace
+    ? `${(latestTrace.latencies.recallMs || 0) + (latestTrace.latencies.searchFanoutMs || 0)}ms`
+    : null;
+
   return (
-    <div className="flex flex-col h-screen bg-[#090a0f] text-slate-100 overflow-hidden">
-      {/* Top Navigation Bar */}
-      <header className="h-14 border-b border-slate-800/80 bg-slate-900/60 backdrop-blur-md px-4 flex items-center justify-between flex-shrink-0 z-10">
+    <div className="flex flex-col h-screen bg-[#080a10] text-slate-100 overflow-hidden font-sans">
+      {/* Sticky Header */}
+      <header className="h-14 border-b border-slate-800/80 bg-slate-900/70 backdrop-blur-md px-4 flex items-center justify-between flex-shrink-0 z-10 sticky top-0">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-lg bg-indigo-600 flex items-center justify-center font-bold text-white shadow-md shadow-indigo-600/30">
+            <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-indigo-600 to-indigo-500 flex items-center justify-center font-bold text-white shadow-md shadow-indigo-600/30">
               M
             </div>
             <div>
-              <h1 className="text-sm font-semibold text-white tracking-tight flex items-center gap-2">
-                Minimi Temporal Agent
-                <span className="text-[10px] px-1.5 py-0.2 rounded font-mono bg-emerald-950 text-emerald-400 border border-emerald-800/60">
-                  SQLite Hybrid WAL
+              <div className="flex items-center gap-2">
+                <h1 className="text-sm font-semibold text-white tracking-tight">
+                  Minimi Agent
+                </h1>
+                {/* System status badge */}
+                <span className="hidden sm:inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-mono bg-indigo-950/80 text-indigo-300 border border-indigo-700/50">
+                  <Cpu className="w-2.5 h-2.5" />
+                  Single Tool: web_search | Hybrid SQLite FTS5 + MiniLM
                 </span>
-              </h1>
+              </div>
             </div>
           </div>
         </div>
 
         {/* Action Controls in Header */}
         <div className="flex items-center gap-2">
+          {/* Quick Reseed DB Fixtures Button */}
           <button
-            onClick={async () => {
-              setIsReseeding(true);
-              try {
-                const res = await fetch('/api/traces', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ action: 'reseed' }),
-                });
-                if (res.ok) {
-                  setReseedMessage('Database fixtures re-seeded!');
-                  setTimeout(() => setReseedMessage(null), 3000);
-                }
-              } catch (err) {
-                console.error('Failed to reseed:', err);
-              } finally {
-                setIsReseeding(false);
-              }
-            }}
+            onClick={handleReseed}
             disabled={isReseeding}
             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-medium bg-slate-800/80 hover:bg-slate-800 text-slate-300 border-slate-700/60 transition-all disabled:opacity-50"
             title="Reset and re-seed historical time-travel sessions"
@@ -142,6 +137,7 @@ export default function ChatPage() {
             <span>{reseedMessage || (isReseeding ? 'Seeding...' : 'Re-seed DB')}</span>
           </button>
 
+          {/* X-Ray Trace Drawer Toggle Button */}
           <button
             onClick={() => setIsXRayOpen((prev) => !prev)}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${
@@ -153,28 +149,32 @@ export default function ChatPage() {
           >
             <Activity className="w-3.5 h-3.5 text-indigo-400" />
             <span>X-Ray Trace</span>
-            {latestTrace && (
+            {activeLatencyBadge && (
               <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-indigo-950 text-indigo-300 border border-indigo-800/50">
-                {latestTrace.latencies.totalMs}ms
+                {activeLatencyBadge}
               </span>
             )}
           </button>
         </div>
       </header>
 
-      {/* One-Click Evaluator Challenge Prompts Bar */}
-      <div className="border-b border-slate-800/60 bg-slate-900/40 px-4 py-2 flex items-center gap-2 overflow-x-auto text-xs flex-shrink-0">
+      {/* One-Click Evaluator Challenge Prompts Bar (visible above chat) */}
+      <div className="border-b border-slate-800/60 bg-slate-950/60 px-4 py-2 flex items-center gap-2 overflow-x-auto text-xs flex-shrink-0 scrollbar-none">
         <div className="flex items-center gap-1.5 text-slate-400 flex-shrink-0 mr-1 font-medium">
           <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-          <span>Evaluator Prompts:</span>
+          <span className="hidden sm:inline">Challenge Prompts:</span>
         </div>
         <div className="flex items-center gap-2 flex-nowrap">
-          {CHALLENGE_PROMPTS.map((challenge) => (
+          {MINIMI_CHALLENGE_PROMPTS.map((challenge) => (
             <button
               key={challenge.id}
               onClick={() => handleChipClick(challenge.prompt)}
               disabled={isLoading}
-              className="px-3 py-1 rounded-full bg-slate-800/60 hover:bg-indigo-950/60 hover:text-indigo-200 border border-slate-700/50 hover:border-indigo-700/60 text-slate-300 whitespace-nowrap transition-all duration-150 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+              className={`px-3 py-1 rounded-full border text-xs whitespace-nowrap transition-all duration-150 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed ${
+                challenge.isGuard
+                  ? 'bg-amber-950/30 hover:bg-amber-950/60 border-amber-800/40 text-amber-300'
+                  : 'bg-slate-900 hover:bg-indigo-950/70 border-slate-800 hover:border-indigo-700/60 text-slate-300 hover:text-indigo-200'
+              }`}
               title={challenge.prompt}
             >
               {challenge.label}
@@ -190,10 +190,11 @@ export default function ChatPage() {
         activeEvents={activeEvents}
         latestTrace={latestTrace}
         onOpenTrace={() => setIsXRayOpen(true)}
+        onSelectPrompt={handleChipClick}
       />
 
       {/* Bottom Message Input Box */}
-      <footer className="p-4 border-t border-slate-800/80 bg-slate-900/70 backdrop-blur-md flex-shrink-0">
+      <footer className="p-4 border-t border-slate-800/80 bg-slate-950/80 backdrop-blur-md flex-shrink-0">
         <form
           onSubmit={handleSubmit}
           className="max-w-4xl mx-auto flex items-center gap-2 relative"
@@ -204,7 +205,7 @@ export default function ChatPage() {
             onChange={handleInputChange}
             placeholder="Ask a temporal question (e.g. 'On Monday we shortlisted 5 CRM tools...')"
             disabled={isLoading}
-            className="flex-1 bg-slate-950/90 border border-slate-800 text-slate-100 placeholder-slate-500 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all shadow-inner disabled:opacity-50"
+            className="flex-1 bg-slate-900/90 border border-slate-800 text-slate-100 placeholder-slate-500 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all shadow-inner disabled:opacity-50"
           />
           <button
             type="submit"
@@ -215,7 +216,7 @@ export default function ChatPage() {
           </button>
         </form>
         <p className="text-[11px] text-center text-slate-500 mt-2 font-mono">
-          Strict Single-Tool Mode (<code>web_search</code>) • Pre-Inference RRF Memory • Capped at 2.5k Tokens
+          Strict Single-Tool Mode (<code className="text-slate-400">web_search</code>) • Pre-Inference RRF Memory • Capped at 2.5k Tokens
         </p>
       </footer>
 
@@ -230,4 +231,3 @@ export default function ChatPage() {
     </div>
   );
 }
-

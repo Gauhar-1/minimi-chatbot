@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { memo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ExternalLink } from 'lucide-react';
@@ -9,7 +9,16 @@ interface MarkdownRendererProps {
   content: string;
 }
 
-export function MarkdownRenderer({ content }: MarkdownRendererProps) {
+function extractDomain(href?: string): string {
+  if (!href) return '';
+  try {
+    return new URL(href).hostname.replace(/^www\./, '');
+  } catch {
+    return href.slice(0, 20);
+  }
+}
+
+function MarkdownRendererComponent({ content }: MarkdownRendererProps) {
   return (
     <div className="markdown-body prose prose-invert max-w-none text-slate-200 text-sm leading-relaxed space-y-3">
       <ReactMarkdown
@@ -17,8 +26,8 @@ export function MarkdownRenderer({ content }: MarkdownRendererProps) {
         components={{
           table({ children }) {
             return (
-              <div className="overflow-x-auto my-4 rounded-xl border border-slate-700/60 bg-slate-900/60 shadow-lg">
-                <table className="min-w-full divide-y divide-slate-700/60 text-left text-xs sm:text-sm">
+              <div className="overflow-x-auto my-4 rounded-xl border border-slate-700/80 bg-slate-950/90 shadow-xl">
+                <table className="min-w-full divide-y divide-slate-700/80 text-left text-xs sm:text-sm">
                   {children}
                 </table>
               </div>
@@ -26,21 +35,21 @@ export function MarkdownRenderer({ content }: MarkdownRendererProps) {
           },
           thead({ children }) {
             return (
-              <thead className="bg-slate-800/80 text-slate-300 font-semibold uppercase tracking-wider text-[11px]">
+              <thead className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 text-slate-200 font-semibold uppercase tracking-wider text-[11px] border-b border-slate-700/80">
                 {children}
               </thead>
             );
           },
           tbody({ children }) {
             return (
-              <tbody className="divide-y divide-slate-800/80 bg-slate-900/30">
+              <tbody className="divide-y divide-slate-800/80 bg-slate-950/50">
                 {children}
               </tbody>
             );
           },
           tr({ children }) {
             return (
-              <tr className="hover:bg-slate-800/40 transition-colors">
+              <tr className="hover:bg-slate-800/40 odd:bg-slate-900/30 even:bg-slate-900/10 transition-colors">
                 {children}
               </tr>
             );
@@ -54,21 +63,28 @@ export function MarkdownRenderer({ content }: MarkdownRendererProps) {
           },
           td({ children }) {
             return (
-              <td className="px-4 py-3 text-slate-300 align-top">
+              <td className="px-4 py-3 text-slate-300 align-top leading-relaxed">
                 {children}
               </td>
             );
           },
           a({ href, children }) {
+            const domain = extractDomain(href);
             return (
               <a
                 href={href}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-0.5 text-indigo-400 hover:text-indigo-300 font-medium underline underline-offset-2 transition-colors"
+                className="inline-flex items-center gap-1 px-2 py-0.5 my-0.5 rounded-full bg-slate-800/90 hover:bg-indigo-950/80 text-indigo-300 hover:text-indigo-200 border border-slate-700/60 hover:border-indigo-600/60 font-mono text-xs transition-colors duration-150 align-baseline no-underline group shadow-sm"
+                title={href}
               >
-                <span>{children}</span>
-                <ExternalLink className="w-3 h-3 opacity-70 ml-0.5 inline" />
+                <span className="font-sans font-medium text-slate-200">{children}</span>
+                {domain && (
+                  <span className="text-[10px] text-slate-400 group-hover:text-indigo-300">
+                    ({domain})
+                  </span>
+                )}
+                <ExternalLink className="w-2.5 h-2.5 opacity-60 group-hover:opacity-100 flex-shrink-0" />
               </a>
             );
           },
@@ -83,13 +99,13 @@ export function MarkdownRenderer({ content }: MarkdownRendererProps) {
             );
           },
           ul({ children }) {
-            return <ul className="list-disc pl-5 space-y-1.5 my-2">{children}</ul>;
+            return <ul className="list-disc pl-5 space-y-1.5 my-2 text-slate-300">{children}</ul>;
           },
           ol({ children }) {
-            return <ol className="list-decimal pl-5 space-y-1.5 my-2">{children}</ol>;
+            return <ol className="list-decimal pl-5 space-y-1.5 my-2 text-slate-300">{children}</ol>;
           },
           li({ children }) {
-            return <li className="text-slate-300">{children}</li>;
+            return <li className="leading-relaxed">{children}</li>;
           },
           blockquote({ children }) {
             return (
@@ -106,3 +122,5 @@ export function MarkdownRenderer({ content }: MarkdownRendererProps) {
   );
 }
 
+// Wrap in React.memo so token streaming in new chunks does not re-parse historical turns
+export const MarkdownRenderer = memo(MarkdownRendererComponent);

@@ -21,76 +21,83 @@ export function PipelineStepper({ events, isStreaming }: PipelineStepperProps) {
   if (!events || events.length === 0) {
     if (!isStreaming) return null;
     return (
-      <div className="flex items-center gap-2 py-2 px-3 bg-slate-900/60 border border-slate-800 rounded-lg text-xs text-slate-400 animate-pulse">
+      <div className="flex items-center gap-2 py-2 px-3 bg-slate-900/80 border border-slate-800 rounded-xl text-xs text-slate-400 animate-pulse">
         <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-400" />
-        <span>Initializing temporal pipeline...</span>
+        <span>Initializing temporal grounding pipeline...</span>
       </div>
     );
   }
 
-  // Get latest status for each phase
-  const phases = [
+  const stages = [
     {
       id: 'temporal_parse',
-      label: 'Temporal Grounding',
+      label: 'Temporal Parse',
       icon: Calendar,
       event: events.filter((e) => e.phase === 'temporal_parse').slice(-1)[0],
     },
     {
       id: 'memory_recall',
-      label: 'Episodic Recall',
+      label: 'Hybrid RRF Recall',
       icon: Database,
       event: events.filter((e) => e.phase === 'memory_recall').slice(-1)[0],
     },
     {
       id: 'search_fanout',
-      label: 'Search Fan-Out',
+      label: 'Parallel Search Fan-Out',
       icon: Search,
       event: events.filter((e) => e.phase === 'search_fanout').slice(-1)[0],
     },
     {
       id: 'deep_scrape',
-      label: 'Deep Scraper',
+      label: 'Deep Pricing Scrape',
       icon: FileText,
       event: events.filter((e) => e.phase === 'deep_scrape').slice(-1)[0],
     },
   ];
 
+  // Active or latest completed event
+  const latestEvent = events[events.length - 1];
+
   return (
-    <div className="flex flex-col gap-2 my-2 p-3 bg-slate-900/70 border border-slate-800/80 rounded-xl shadow-sm text-xs">
+    <div className="flex flex-col gap-2.5 my-2 p-3 bg-slate-950/80 border border-slate-800/90 rounded-xl shadow-md text-xs backdrop-blur-sm">
       <div className="flex flex-wrap items-center gap-2">
-        {phases.map((p) => {
-          const Icon = p.icon;
-          const ev = p.event;
+        {stages.map((stage) => {
+          const Icon = stage.icon;
+          const ev = stage.event;
           const isStarted = ev?.status === 'started';
           const isCompleted = ev?.status === 'completed';
           const isFailed = ev?.status === 'failed';
 
-          let statusBadgeClass =
-            'bg-slate-800/40 text-slate-500 border-slate-800';
+          let containerClass = 'bg-slate-900/50 text-slate-500 border-slate-800/60';
           if (isStarted) {
-            statusBadgeClass =
-              'bg-indigo-950/70 text-indigo-300 border-indigo-700/60 animate-pulse';
+            containerClass =
+              'bg-indigo-950/80 text-indigo-300 border-indigo-700/60 shadow-sm shadow-indigo-950 animate-pulse';
           } else if (isCompleted) {
-            statusBadgeClass =
-              'bg-emerald-950/60 text-emerald-300 border-emerald-700/50';
+            containerClass =
+              'bg-emerald-950/70 text-emerald-300 border-emerald-700/60';
           } else if (isFailed) {
-            statusBadgeClass =
-              'bg-rose-950/60 text-rose-300 border-rose-700/50';
+            containerClass =
+              'bg-rose-950/70 text-rose-300 border-rose-700/60';
           }
 
           return (
             <div
-              key={p.id}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border transition-all ${statusBadgeClass}`}
+              key={stage.id}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11px] font-medium transition-all ${containerClass}`}
             >
-              <Icon className="w-3.5 h-3.5" />
-              <span className="font-medium">{p.label}</span>
-              {isStarted && <Loader2 className="w-3 h-3 animate-spin text-indigo-400" />}
-              {isCompleted && <CheckCircle2 className="w-3 h-3 text-emerald-400" />}
-              {isFailed && <AlertCircle className="w-3 h-3 text-rose-400" />}
+              <Icon className="w-3.5 h-3.5 flex-shrink-0" />
+              <span>{stage.label}</span>
+              {isStarted && (
+                <Loader2 className="w-3 h-3 animate-spin text-indigo-400 ml-0.5" />
+              )}
+              {isCompleted && (
+                <CheckCircle2 className="w-3 h-3 text-emerald-400 ml-0.5" />
+              )}
+              {isFailed && (
+                <AlertCircle className="w-3 h-3 text-rose-400 ml-0.5" />
+              )}
               {ev?.durationMs !== undefined && (
-                <span className="text-[10px] opacity-75 font-mono ml-0.5">
+                <span className="text-[10px] font-mono opacity-80 ml-0.5">
                   {ev.durationMs}ms
                 </span>
               )}
@@ -99,18 +106,20 @@ export function PipelineStepper({ events, isStreaming }: PipelineStepperProps) {
         })}
       </div>
 
-      {/* Latest live event detail */}
-      {events.length > 0 && (
-        <div className="text-[11px] text-slate-400 font-mono truncate pl-1 pt-0.5 border-t border-slate-800/50 flex items-center justify-between">
-          <span className="truncate">
-            <span className="text-slate-500 font-semibold uppercase mr-1.5">
-              [{events[events.length - 1].phase}]
-            </span>
-            {events[events.length - 1].detail}
+      {/* Live status detail line */}
+      {latestEvent && (
+        <div className="flex items-center gap-1.5 text-[11px] font-mono text-slate-300 border-t border-slate-800/60 pt-2 px-0.5">
+          <span className="text-indigo-400 font-semibold uppercase text-[10px]">
+            [{latestEvent.phase}]
           </span>
+          <span className="truncate">{latestEvent.detail}</span>
+          {latestEvent.durationMs !== undefined && (
+            <span className="text-slate-500 ml-auto flex-shrink-0">
+              ({latestEvent.durationMs}ms)
+            </span>
+          )}
         </div>
       )}
     </div>
   );
 }
-

@@ -46,14 +46,26 @@ export function getDatabase(customPath?: string): Database.Database {
 }
 
 /**
- * Atomic schema creation: raw messages, FTS5 virtual table + triggers,
- * session facts, and turn traces.
+ * Atomic schema creation: sessions, raw messages, FTS5 virtual table + triggers,
+ * session facts, and turn traces with multi-tenant user_id isolation.
  */
 function initSchema(db: Database.Database): void {
   db.exec(`
+    -- Sessions table for multi-tenant and multi-session isolation
+    CREATE TABLE IF NOT EXISTS sessions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL DEFAULT 'usr_evaluator',
+      title TEXT NOT NULL,
+      created_at_utc TEXT NOT NULL,
+      updated_at_utc TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_sessions_user_updated ON sessions(user_id, updated_at_utc);
+
     -- Raw chat messages
     CREATE TABLE IF NOT EXISTS messages (
       id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL DEFAULT 'usr_evaluator',
       session_id TEXT NOT NULL,
       role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
       content TEXT NOT NULL,
@@ -61,6 +73,7 @@ function initSchema(db: Database.Database): void {
       embedding BLOB
     );
 
+    CREATE INDEX IF NOT EXISTS idx_messages_user_session_created ON messages(user_id, session_id, created_at_utc);
     CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id);
     CREATE INDEX IF NOT EXISTS idx_messages_created_at_utc ON messages(created_at_utc);
 
@@ -68,14 +81,15 @@ function initSchema(db: Database.Database): void {
     CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
       content,
       message_id UNINDEXED,
+      user_id UNINDEXED,
       created_at_utc UNINDEXED,
       tokenize='porter unicode61'
     );
 
     -- Trigger: keep messages_fts updated on insert
     CREATE TRIGGER IF NOT EXISTS trg_messages_ai AFTER INSERT ON messages BEGIN
-      INSERT INTO messages_fts(content, message_id, created_at_utc)
-      VALUES (new.content, new.id, new.created_at_utc);
+      INSERT INTO messages_fts(content, message_id, user_id, created_at_utc)
+      VALUES (new.content, new.id, new.user_id, new.created_at_utc);
     END;
 
     -- Trigger: keep messages_fts updated on delete
@@ -86,13 +100,14 @@ function initSchema(db: Database.Database): void {
     -- Trigger: keep messages_fts updated on update
     CREATE TRIGGER IF NOT EXISTS trg_messages_au AFTER UPDATE ON messages BEGIN
       DELETE FROM messages_fts WHERE message_id = old.id;
-      INSERT INTO messages_fts(content, message_id, created_at_utc)
-      VALUES (new.content, new.id, new.created_at_utc);
+      INSERT INTO messages_fts(content, message_id, user_id, created_at_utc)
+      VALUES (new.content, new.id, new.user_id, new.created_at_utc);
     END;
 
     -- Distilled atomic session facts
     CREATE TABLE IF NOT EXISTS session_facts (
       id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL DEFAULT 'usr_evaluator',
       session_id TEXT NOT NULL,
       fact_text TEXT NOT NULL,
       entities_json TEXT NOT NULL,
@@ -100,18 +115,20 @@ function initSchema(db: Database.Database): void {
       embedding BLOB
     );
 
+    CREATE INDEX IF NOT EXISTS idx_session_facts_user_ref_date ON session_facts(user_id, reference_date_utc);
     CREATE INDEX IF NOT EXISTS idx_session_facts_session_id ON session_facts(session_id);
-    CREATE INDEX IF NOT EXISTS idx_session_facts_ref_date ON session_facts(reference_date_utc);
 
     -- Turn traces for observability and X-Ray drawer
     CREATE TABLE IF NOT EXISTS turn_traces (
       id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL DEFAULT 'usr_evaluator',
       session_id TEXT NOT NULL,
       user_prompt TEXT NOT NULL,
       trace_json TEXT NOT NULL,
       created_at_utc TEXT NOT NULL
     );
 
+    CREATE INDEX IF NOT EXISTS idx_turn_traces_user_session_created ON turn_traces(user_id, session_id, created_at_utc);
     CREATE INDEX IF NOT EXISTS idx_turn_traces_session_id ON turn_traces(session_id);
     CREATE INDEX IF NOT EXISTS idx_turn_traces_created_at ON turn_traces(created_at_utc);
   `);

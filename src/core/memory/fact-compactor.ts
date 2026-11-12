@@ -74,7 +74,8 @@ export async function extractAndSaveTurnFacts(
   userPrompt: string,
   assistantReply: string,
   writer: IMemoryWriter,
-  referenceDateUtc: string = new Date().toISOString()
+  referenceDateUtc: string = new Date().toISOString(),
+  userId: string = 'usr_evaluator'
 ): Promise<string[]> {
   try {
     const { entities, pricing, constraints } = extractEntitiesAndConstraints(
@@ -106,6 +107,7 @@ export async function extractAndSaveTurnFacts(
     const savedIds: string[] = [];
     for (const item of factsToSave) {
       const id = await writer.saveFact({
+        userId,
         sessionId,
         factText: item.text,
         entitiesJson: JSON.stringify(item.entities),
@@ -135,14 +137,16 @@ export class FactCompactor {
     sessionId: string,
     userPrompt: string,
     assistantReply: string,
-    referenceDateUtc: string = new Date().toISOString()
+    referenceDateUtc: string = new Date().toISOString(),
+    userId: string = 'usr_evaluator'
   ): Promise<string | null> {
     const ids = await extractAndSaveTurnFacts(
       sessionId,
       userPrompt,
       assistantReply,
       this.writer,
-      referenceDateUtc
+      referenceDateUtc,
+      userId
     );
     return ids[0] || null;
   }

@@ -17,6 +17,7 @@ const MAX_CONTEXT_CHARS = 1800; // Strict ~450 token high-density recall cap for
 
 interface DBMessageRow {
   id: string;
+  user_id: string;
   session_id: string;
   role: 'user' | 'assistant' | 'system';
   content: string;
@@ -26,6 +27,7 @@ interface DBMessageRow {
 
 interface DBFactRow {
   id: string;
+  user_id: string;
   session_id: string;
   fact_text: string;
   entities_json: string;
@@ -46,11 +48,12 @@ export class HybridMemoryEngine implements IMemoryReader, IMemoryWriter {
 
   public async recallContext(
     query: string,
-    temporalWindow?: TemporalWindow
+    temporalWindow?: TemporalWindow,
+    userId: string = 'usr_evaluator'
   ): Promise<RecalledContext> {
     const startTime = performance.now();
 
-    // 1. Hallucination Guard: If a temporal constraint was specified, verify records exist within +-24h
+    // 1. Hallucination Guard: If a temporal constraint was specified, verify records exist within +-24h for this user
     if (temporalWindow?.hasTemporalReference && temporalWindow.startUtc && temporalWindow.endUtc) {
       const guardStart = new Date(
         new Date(temporalWindow.startUtc).getTime() - 24 * 60 * 60 * 1000
@@ -61,9 +64,9 @@ export class HybridMemoryEngine implements IMemoryReader, IMemoryWriter {
 
       const countRow = this.db
         .prepare(
-          `SELECT COUNT(*) as count FROM messages WHERE created_at_utc >= ? AND created_at_utc <= ?`
+          `SELECT COUNT(*) as count FROM messages WHERE user_id = ? AND created_at_utc >= ? AND created_at_utc <= ?`
         )
-        .get(guardStart, guardEnd) as { count: number };
+        .get(userId, guardStart, guardEnd) as { count: number };
 
       if (!countRow || countRow.count === 0) {
         return {
@@ -79,21 +82,22 @@ export class HybridMemoryEngine implements IMemoryReader, IMemoryWriter {
       }
     }
 
-    // 2. Temporal Window Ranking (r_time)
+    // 2. Temporal Window Ranking (r_time) - strictly isolated by user_id
     const timeRanks = new Map<string, number>();
     if (temporalWindow?.hasTemporalReference && temporalWindow.startUtc && temporalWindow.endUtc) {
       const startMs = new Date(temporalWindow.startUtc).getTime();
       const endMs = new Date(temporalWindow.endUtc).getTime();
       const midMs = (startMs + endMs) / 2;
 
-      // Select candidate messages near or inside the temporal window
+      // Select candidate messages near or inside the temporal window for this user
       const messagesInRange = this.db
         .prepare(
           `SELECT id, created_at_utc FROM messages
+           WHERE user_id = ?
            ORDER BY ABS(strftime('%s', created_at_utc) * 1000 - ?) ASC
            LIMIT 50`
         )
-        .all(midMs) as Array<{ id: string; created_at_utc: string }>;
+        .all(userId, midMs) as Array<{ id: string; created_at_utc: string }>;
 
       messagesInRange.forEach((row, idx) => {
         timeRanks.set(row.id, idx + 1);
@@ -102,17 +106,18 @@ export class HybridMemoryEngine implements IMemoryReader, IMemoryWriter {
       const factsInRange = this.db
         .prepare(
           `SELECT id, reference_date_utc FROM session_facts
+           WHERE user_id = ?
            ORDER BY ABS(strftime('%s', reference_date_utc) * 1000 - ?) ASC
            LIMIT 20`
         )
-        .all(midMs) as Array<{ id: string; reference_date_utc: string }>;
+        .all(userId, midMs) as Array<{ id: string; reference_date_utc: string }>;
 
       factsInRange.forEach((row, idx) => {
         timeRanks.set(row.id, idx + 1);
       });
     }
 
-    // 3. SQLite FTS5 BM25 Lexical Ranking (r_bm25)
+    // 3. SQLite FTS5 BM25 Lexical Ranking (r_bm25) - isolated by user_id
     const bm25Ranks = new Map<string, number>();
     const keywords =
       temporalWindow?.searchKeywords && temporalWindow.searchKeywords.length > 0
@@ -136,11 +141,11 @@ export class HybridMemoryEngine implements IMemoryReader, IMemoryWriter {
             .prepare(
               `SELECT message_id, bm25(messages_fts) as rank
                FROM messages_fts
-               WHERE messages_fts MATCH ?
+               WHERE messages_fts MATCH ? AND user_id = ?
                ORDER BY rank ASC
                LIMIT 50`
             )
-            .all(sanitizedFtsQuery) as Array<{ message_id: string; rank: number }>;
+            .all(sanitizedFtsQuery, userId) as Array<{ message_id: string; rank: number }>;
 
           ftsRows.forEach((row, idx) => {
             bm25Ranks.set(row.message_id, idx + 1);
@@ -151,19 +156,20 @@ export class HybridMemoryEngine implements IMemoryReader, IMemoryWriter {
       }
     }
 
-    // 4. In-process Float32Array Cosine Similarity Ranking (r_vec)
+    // 4. In-process Float32Array Cosine Similarity Ranking (r_vec) - strictly filtered by user_id
     const vecRanks = new Map<string, number>();
     const queryEmbedding = await LocalEmbedder.embed(query);
 
-    // Retrieve recent message candidates with embeddings
+    // Retrieve recent message candidates with embeddings for this user
     const allMessages = this.db
       .prepare(
-        `SELECT id, session_id, role, content, created_at_utc, embedding
+        `SELECT id, user_id, session_id, role, content, created_at_utc, embedding
          FROM messages
+         WHERE user_id = ?
          ORDER BY created_at_utc DESC
          LIMIT 200`
       )
-      .all() as DBMessageRow[];
+      .all(userId) as DBMessageRow[];
 
     const msgSimilarities: Array<{ id: string; similarity: number }> = [];
     for (const msg of allMessages) {
@@ -179,15 +185,16 @@ export class HybridMemoryEngine implements IMemoryReader, IMemoryWriter {
       vecRanks.set(item.id, idx + 1);
     });
 
-    // Also compute similarity against session facts
+    // Also compute similarity against session facts for this user
     const allFacts = this.db
       .prepare(
-        `SELECT id, session_id, fact_text, entities_json, reference_date_utc, embedding
+        `SELECT id, user_id, session_id, fact_text, entities_json, reference_date_utc, embedding
          FROM session_facts
+         WHERE user_id = ?
          ORDER BY reference_date_utc DESC
          LIMIT 100`
       )
-      .all() as DBFactRow[];
+      .all(userId) as DBFactRow[];
 
     const factSimilarities: Array<{ id: string; similarity: number }> = [];
     for (const fact of allFacts) {
@@ -271,21 +278,22 @@ export class HybridMemoryEngine implements IMemoryReader, IMemoryWriter {
       }
     }
 
-    // Ensure turn completeness: For any matched assistant message, fetch the corresponding user prompt from that session
+    // Ensure turn completeness: For any matched assistant message, fetch the corresponding user prompt from that session (isolated by user_id)
     for (const session_id of includedSessionIds) {
       const sessionMessages = this.db
         .prepare(
-          `SELECT id, session_id, role, content, created_at_utc, embedding
+          `SELECT id, user_id, session_id, role, content, created_at_utc, embedding
            FROM messages
-           WHERE session_id = ?
+           WHERE user_id = ? AND session_id = ?
            ORDER BY created_at_utc ASC`
         )
-        .all(session_id) as DBMessageRow[];
+        .all(userId, session_id) as DBMessageRow[];
 
       for (const sMsg of sessionMessages) {
         if (!matchedMessages.some((m) => m.id === sMsg.id)) {
           matchedMessages.push({
             id: sMsg.id,
+            userId: sMsg.user_id,
             sessionId: sMsg.session_id,
             role: sMsg.role,
             content: sMsg.content,
@@ -326,18 +334,19 @@ export class HybridMemoryEngine implements IMemoryReader, IMemoryWriter {
     };
   }
 
-  public async getRecentSession(sessionId: string): Promise<MemoryMessage[]> {
+  public async getRecentSession(sessionId: string, userId: string = 'usr_evaluator'): Promise<MemoryMessage[]> {
     const rows = this.db
       .prepare(
-        `SELECT id, session_id, role, content, created_at_utc, embedding
+        `SELECT id, user_id, session_id, role, content, created_at_utc, embedding
          FROM messages
-         WHERE session_id = ?
+         WHERE user_id = ? AND session_id = ?
          ORDER BY created_at_utc ASC`
       )
-      .all(sessionId) as DBMessageRow[];
+      .all(userId, sessionId) as DBMessageRow[];
 
     return rows.map((r) => ({
       id: r.id,
+      userId: r.user_id,
       sessionId: r.session_id,
       role: r.role,
       content: r.content,
@@ -354,30 +363,32 @@ export class HybridMemoryEngine implements IMemoryReader, IMemoryWriter {
     message: Omit<MemoryMessage, 'id'> & { id?: string }
   ): Promise<string> {
     const id = message.id || `msg_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    const userId = message.userId || 'usr_evaluator';
     const vec = message.embedding || (await LocalEmbedder.embed(message.content));
     const blob = LocalEmbedder.vectorToBlob(vec);
 
     this.db
       .prepare(
-        `INSERT INTO messages (id, session_id, role, content, created_at_utc, embedding)
-         VALUES (?, ?, ?, ?, ?, ?)`
+        `INSERT INTO messages (id, user_id, session_id, role, content, created_at_utc, embedding)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
       )
-      .run(id, message.sessionId, message.role, message.content, message.createdAtUtc, blob);
+      .run(id, userId, message.sessionId, message.role, message.content, message.createdAtUtc, blob);
 
     return id;
   }
 
   public async saveFact(fact: Omit<SessionFact, 'id'> & { id?: string }): Promise<string> {
     const id = fact.id || `fact_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    const userId = fact.userId || 'usr_evaluator';
     const vec = fact.embedding || (await LocalEmbedder.embed(fact.factText));
     const blob = LocalEmbedder.vectorToBlob(vec);
 
     this.db
       .prepare(
-        `INSERT INTO session_facts (id, session_id, fact_text, entities_json, reference_date_utc, embedding)
-         VALUES (?, ?, ?, ?, ?, ?)`
+        `INSERT INTO session_facts (id, user_id, session_id, fact_text, entities_json, reference_date_utc, embedding)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
       )
-      .run(id, fact.sessionId, fact.factText, fact.entitiesJson, fact.referenceDateUtc, blob);
+      .run(id, userId, fact.sessionId, fact.factText, fact.entitiesJson, fact.referenceDateUtc, blob);
 
     return id;
   }
@@ -386,12 +397,13 @@ export class HybridMemoryEngine implements IMemoryReader, IMemoryWriter {
     messages: Array<Omit<MemoryMessage, 'id'> & { id?: string }>
   ): Promise<void> {
     const insertStmt = this.db.prepare(
-      `INSERT INTO messages (id, session_id, role, content, created_at_utc, embedding)
-       VALUES (?, ?, ?, ?, ?, ?)`
+      `INSERT INTO messages (id, user_id, session_id, role, content, created_at_utc, embedding)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
     );
 
     const preparedData: Array<{
       id: string;
+      userId: string;
       sessionId: string;
       role: string;
       content: string;
@@ -401,10 +413,12 @@ export class HybridMemoryEngine implements IMemoryReader, IMemoryWriter {
 
     for (const msg of messages) {
       const id = msg.id || `msg_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+      const userId = msg.userId || 'usr_evaluator';
       const vec = msg.embedding || (await LocalEmbedder.embed(msg.content));
       const blob = LocalEmbedder.vectorToBlob(vec);
       preparedData.push({
         id,
+        userId,
         sessionId: msg.sessionId,
         role: msg.role,
         content: msg.content,
@@ -417,6 +431,7 @@ export class HybridMemoryEngine implements IMemoryReader, IMemoryWriter {
       for (const item of items) {
         insertStmt.run(
           item.id,
+          item.userId,
           item.sessionId,
           item.role,
           item.content,

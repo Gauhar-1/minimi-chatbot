@@ -14,6 +14,7 @@ const ChatRequestSchema = z.object({
     createdAt: z.unknown().optional(),
   }).passthrough()).default([]),
   sessionId: z.string().optional(),
+  userId: z.string().optional(),
 });
 
 export async function POST(req: Request) {
@@ -38,6 +39,7 @@ export async function POST(req: Request) {
     const messages = body.messages as Message[];
     const sessionId =
       body.sessionId || `session_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const userId = body.userId || 'usr_evaluator';
 
     const lastMessage = messages[messages.length - 1];
     const userPrompt = lastMessage?.role === 'user' ? lastMessage.content : '';
@@ -49,6 +51,20 @@ export async function POST(req: Request) {
       });
     }
 
+    // Auto-create or touch session row in SQLite
+    const db = (await import('@/core/memory/sqlite-client')).getDatabase();
+    const existingSession = db.prepare('SELECT id FROM sessions WHERE id = ?').get(sessionId);
+    const nowUtc = new Date().toISOString();
+    if (!existingSession) {
+      const generatedTitle = userPrompt.length > 42 ? `${userPrompt.slice(0, 42)}...` : userPrompt;
+      db.prepare(
+        `INSERT INTO sessions (id, user_id, title, created_at_utc, updated_at_utc)
+         VALUES (?, ?, ?, ?, ?)`
+      ).run(sessionId, userId, generatedTitle, nowUtc, nowUtc);
+    } else {
+      db.prepare('UPDATE sessions SET updated_at_utc = ? WHERE id = ?').run(nowUtc, sessionId);
+    }
+
     const orchestrator = new ChatOrchestrator();
 
     return createDataStreamResponse({
@@ -56,6 +72,7 @@ export async function POST(req: Request) {
         try {
           const { stream } = await orchestrator.executePipeline({
             sessionId,
+            userId,
             userPrompt,
             conversationHistory: messages.slice(0, -1).map((m) => ({
               role: m.role as 'user' | 'assistant' | 'system',

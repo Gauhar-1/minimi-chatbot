@@ -93,15 +93,22 @@ export async function ensureDatabaseSeeded(force = false): Promise<SeedResult> {
   console.log(`  - "Last Tuesday" -> ${lastTuesdayTimestampUtc}`);
   console.log(`  - "3 November"   -> ${nov3TimestampUtc}`);
 
+  const defaultUserId = 'usr_evaluator';
+
   // Prepared insert statements
+  const insertSession = db.prepare(
+    `INSERT OR REPLACE INTO sessions (id, user_id, title, created_at_utc, updated_at_utc)
+     VALUES (?, ?, ?, ?, ?)`
+  );
+
   const insertMsg = db.prepare(
-    `INSERT INTO messages (id, session_id, role, content, created_at_utc, embedding)
-     VALUES (?, ?, ?, ?, ?, ?)`
+    `INSERT INTO messages (id, user_id, session_id, role, content, created_at_utc, embedding)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
   );
 
   const insertFact = db.prepare(
-    `INSERT INTO session_facts (id, session_id, fact_text, entities_json, reference_date_utc, embedding)
-     VALUES (?, ?, ?, ?, ?, ?)`
+    `INSERT INTO session_facts (id, user_id, session_id, fact_text, entities_json, reference_date_utc, embedding)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
   );
 
   // =========================================================================
@@ -235,9 +242,35 @@ For a 20-person sales team, Attio offers the most flexible modern data model at 
 
   // Execute database transaction
   const seedTx = db.transaction(() => {
+    // 0. Seed real sidebar sessions for the evaluator
+    insertSession.run(
+      mondaySessionId,
+      defaultUserId,
+      'CRM Shortlist (20-Person Sales Team)',
+      mondayTimestampUtc,
+      new Date(new Date(mondayTimestampUtc).getTime() + 15000).toISOString()
+    );
+
+    insertSession.run(
+      tuesdaySessionId,
+      defaultUserId,
+      'Postgres Hosting Comparison',
+      lastTuesdayTimestampUtc,
+      new Date(new Date(lastTuesdayTimestampUtc).getTime() + 12000).toISOString()
+    );
+
+    insertSession.run(
+      nov3SessionId,
+      defaultUserId,
+      'Nov 3 Architecture & Pricing Q&A',
+      nov3TimestampUtc,
+      new Date(new Date(nov3TimestampUtc).getTime() + 18000).toISOString()
+    );
+
     // 1. Monday Session
     insertMsg.run(
       'msg_monday_user_01',
+      defaultUserId,
       mondaySessionId,
       'user',
       mondayUserPrompt,
@@ -246,6 +279,7 @@ For a 20-person sales team, Attio offers the most flexible modern data model at 
     );
     insertMsg.run(
       'msg_monday_assistant_01',
+      defaultUserId,
       mondaySessionId,
       'assistant',
       mondayAssistantReply,
@@ -255,6 +289,7 @@ For a 20-person sales team, Attio offers the most flexible modern data model at 
 
     insertFact.run(
       'fact_crm_01',
+      defaultUserId,
       mondaySessionId,
       'Shortlisted 5 CRM platforms for 20-person sales team: HubSpot Sales Hub Pro ($90/seat/mo), Attio Pro ($59/seat/mo), Pipedrive Pro ($49.90/seat/mo), Close Pro ($99/seat/mo), Salesforce Starter ($25/seat/mo) / Pro Suite ($100/seat/mo).',
       JSON.stringify(['HubSpot', 'Attio', 'Pipedrive', 'Close', 'Salesforce']),
@@ -263,6 +298,7 @@ For a 20-person sales team, Attio offers the most flexible modern data model at 
     );
     insertFact.run(
       'fact_crm_02',
+      defaultUserId,
       mondaySessionId,
       'Sales team constraints: 20 sales representatives, deal pipeline automation, custom reporting, and CRM outbound sequencing.',
       JSON.stringify(['Sales Team', 'Pricing', 'CRM']),
@@ -273,6 +309,7 @@ For a 20-person sales team, Attio offers the most flexible modern data model at 
     // 2. Tuesday Session
     insertMsg.run(
       'msg_tuesday_user_01',
+      defaultUserId,
       tuesdaySessionId,
       'user',
       tuesdayUserPrompt,
@@ -281,6 +318,7 @@ For a 20-person sales team, Attio offers the most flexible modern data model at 
     );
     insertMsg.run(
       'msg_tuesday_assistant_01',
+      defaultUserId,
       tuesdaySessionId,
       'assistant',
       tuesdayAssistantReply,
@@ -290,6 +328,7 @@ For a 20-person sales team, Attio offers the most flexible modern data model at 
 
     insertFact.run(
       'fact_postgres_01',
+      defaultUserId,
       tuesdaySessionId,
       'Evaluated managed Postgres providers: Supabase Pro ($25/mo base + compute add-ons), Neon Scale ($69/mo), AWS RDS PostgreSQL (db.t4g.medium ~$49/mo + gp3), Render Postgres Standard ($20/mo) / Pro ($35/mo).',
       JSON.stringify(['Supabase', 'Neon', 'AWS RDS', 'Render', 'PostgreSQL']),
@@ -300,6 +339,7 @@ For a 20-person sales team, Attio offers the most flexible modern data model at 
     // 3. Nov 3 Session
     insertMsg.run(
       'msg_nov3_user_01',
+      defaultUserId,
       nov3SessionId,
       'user',
       nov3UserPrompt,
@@ -308,6 +348,7 @@ For a 20-person sales team, Attio offers the most flexible modern data model at 
     );
     insertMsg.run(
       'msg_nov3_assistant_01',
+      defaultUserId,
       nov3SessionId,
       'assistant',
       nov3AssistantReply,
@@ -317,6 +358,7 @@ For a 20-person sales team, Attio offers the most flexible modern data model at 
 
     insertFact.run(
       'fact_vector_01',
+      defaultUserId,
       nov3SessionId,
       'Vector database comparison on November 3: Pinecone Serverless ($0.25/1M RU, $0.33/1M WU, $0.33/GB storage), Weaviate Cloud ($0.085/1M dim/mo), and Qdrant Cloud ($25/mo starter node).',
       JSON.stringify(['Pinecone', 'Weaviate', 'Qdrant', 'Vector Database']),

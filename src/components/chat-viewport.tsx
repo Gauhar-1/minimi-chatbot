@@ -106,39 +106,47 @@ function ChatViewportComponent({
           <Bot className="w-6 h-6" />
         </div>
         <h2 className="text-xl font-semibold text-[#f4f4f5] mb-2 tracking-tight">
-          Where would you like to start?
+          How can I help you research today?
         </h2>
-        <p className="text-xs max-w-md text-zinc-400 leading-relaxed mb-8">
-          Search with temporal awareness, recall episodic memories, and verify SaaS pricing and technical changes.
+        <p className="text-xs max-w-md text-zinc-400 leading-relaxed mb-6">
+          Search with temporal awareness, recall episodic memories, and verify live SaaS pricing and technical changes.
         </p>
 
-        {/* 2x2 Grid of Starter Prompt Cards */}
-        <div className="w-full text-left space-y-3">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {MINIMI_CHALLENGE_PROMPTS.map((p) => (
-              <button
-                key={p.id}
-                onClick={() => onSelectPrompt(p.prompt)}
-                className={`p-4 rounded-xl border text-left transition-all duration-200 hover:shadow-lg active:scale-[0.99] group bg-[#121215] border-white/[0.08] hover:border-white/[0.18]`}
-              >
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="font-medium text-xs text-zinc-200 group-hover:text-white flex items-center gap-1.5">
-                    {p.isGuard && <ShieldAlert className="w-3.5 h-3.5 text-zinc-400" />}
-                    {p.label}
-                  </span>
-                  {devMode && p.invariantDescription && (
-                    <span className="text-[10px] font-mono text-zinc-400 px-1.5 py-0.5 rounded bg-zinc-900 border border-white/[0.06]">
-                      {p.invariantDescription}
+        {/* In Dev Mode: Reveal the Minimi Evaluator Test Bench */}
+        {devMode && (
+          <div className="w-full text-left space-y-3 mt-2">
+            <div className="flex items-center gap-2 mb-1 px-1">
+              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+              <span className="text-xs font-semibold text-zinc-300 uppercase tracking-wider">
+                Minimi Evaluator Test Bench
+              </span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {MINIMI_CHALLENGE_PROMPTS.map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => onSelectPrompt(p.prompt)}
+                  className="p-4 rounded-xl border text-left transition-all duration-200 hover:shadow-lg active:scale-[0.99] group bg-[#121215] border-white/[0.08] hover:border-white/[0.18]"
+                >
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="font-medium text-xs text-zinc-200 group-hover:text-white flex items-center gap-1.5">
+                      {p.isGuard && <ShieldAlert className="w-3.5 h-3.5 text-zinc-400" />}
+                      {p.label}
                     </span>
-                  )}
-                </div>
-                <p className="text-[12px] text-zinc-400 line-clamp-2 leading-relaxed">
-                  "{p.prompt}"
-                </p>
-              </button>
-            ))}
+                    {p.invariantDescription && (
+                      <span className="text-[10px] font-mono text-zinc-400 px-1.5 py-0.5 rounded bg-zinc-900 border border-white/[0.06]">
+                        {p.invariantDescription}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[12px] text-zinc-400 line-clamp-2 leading-relaxed">
+                    "{p.prompt}"
+                  </p>
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
       </div>
     );
   }

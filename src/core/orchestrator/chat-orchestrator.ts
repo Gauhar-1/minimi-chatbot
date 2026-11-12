@@ -18,6 +18,7 @@ import type { DataStreamWriter } from 'ai';
 
 export interface OrchestratorRunOptions {
   sessionId: string;
+  userId?: string;
   userPrompt: string;
   conversationHistory?: CoreMessage[];
   onPhaseEvent?: (event: PipelinePhaseEvent) => void;
@@ -52,6 +53,7 @@ export class ChatOrchestrator {
   public async executePipeline(options: OrchestratorRunOptions) {
     const totalStartTime = performance.now();
     const traceId = `trace_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const userId = options.userId || 'usr_evaluator';
     const events: PipelinePhaseEvent[] = [];
 
     const emitEvent = (event: PipelinePhaseEvent) => {
@@ -85,34 +87,59 @@ export class ChatOrchestrator {
     });
 
     // =========================================================================
-    // Stage 2: Hybrid Episodic Memory Recall (RRF)
+    // Stage 2: Hybrid Episodic Memory Recall (RRF) - Isolated by user_id
     // =========================================================================
-    emitEvent({
-      phase: 'memory_recall',
-      status: 'started',
-      detail: 'Querying SQLite FTS5 BM25, local embeddings, and temporal window ranking...',
-      timestamp: new Date().toISOString(),
-    });
+    // Prior discussion intent detector: recall across past sessions when temporal constraint
+    // exists OR when user query specifically asks about past discussions/shortlists.
+    const isExplicitHistoricalQuery =
+      temporalWindow.hasTemporalReference ||
+      /\b(shortlist|shortlisted|ask you|asked you|last time|previous|earlier|we discuss|we choose|we compare|remember)\b/i.test(
+        options.userPrompt
+      );
 
-    const recalledContext = await this.memoryReader.recallContext(
-      options.userPrompt,
-      temporalWindow
-    );
+    let recalledContext: Awaited<ReturnType<typeof this.memoryReader.recallContext>>;
 
-    emitEvent({
-      phase: 'memory_recall',
-      status: 'completed',
-      detail:
-        recalledContext.recallStatus === 'EMPTY_FOR_DATE_WINDOW'
-          ? `[Guard] Zero records exist for date window (${recalledContext.latencyMs}ms)`
-          : `Recalled ${recalledContext.matchedMessages.length} messages and ${recalledContext.matchedFacts.length} atomic facts (${recalledContext.latencyMs}ms)`,
-      timestamp: new Date().toISOString(),
-      durationMs: recalledContext.latencyMs,
-      metadata: {
-        recallStatus: recalledContext.recallStatus,
-        candidateCount: recalledContext.totalCandidateCount,
-      },
-    });
+    if (isExplicitHistoricalQuery) {
+      emitEvent({
+        phase: 'memory_recall',
+        status: 'started',
+        detail: `Querying SQLite FTS5 BM25, embeddings, and temporal window ranking for user [${userId}]...`,
+        timestamp: new Date().toISOString(),
+      });
+
+      recalledContext = await this.memoryReader.recallContext(
+        options.userPrompt,
+        temporalWindow,
+        userId
+      );
+
+      emitEvent({
+        phase: 'memory_recall',
+        status: 'completed',
+        detail:
+          recalledContext.recallStatus === 'EMPTY_FOR_DATE_WINDOW'
+            ? `[Guard] Zero records exist for date window (${recalledContext.latencyMs}ms)`
+            : `Recalled ${recalledContext.matchedMessages.length} messages and ${recalledContext.matchedFacts.length} atomic facts (${recalledContext.latencyMs}ms)`,
+        timestamp: new Date().toISOString(),
+        durationMs: recalledContext.latencyMs,
+        metadata: {
+          recallStatus: recalledContext.recallStatus,
+          candidateCount: recalledContext.totalCandidateCount,
+        },
+      });
+    } else {
+      // For standard inquiries without historical references, keep context clean
+      recalledContext = {
+        recallStatus: 'NO_TEMPORAL_CONSTRAINT',
+        temporalWindow,
+        matchedMessages: [],
+        matchedFacts: [],
+        formattedHistoricalContext: '',
+        rrfScores: {},
+        totalCandidateCount: 0,
+        latencyMs: 0,
+      };
+    }
 
     // =========================================================================
     // Stage 3: LLM Model Resolution & Single-Tool Stream Setup
@@ -364,11 +391,21 @@ export class ChatOrchestrator {
             };
 
             // Persist trace to SQLite turn_traces
+            (tracePayload as any).userId = userId;
             await this.traceLogger.logTrace(tracePayload);
             options.onTraceComplete?.(tracePayload);
 
-            // Persist assistant reply to SQLite messages
+            // Persist user prompt and assistant reply to SQLite messages
             await this.memoryWriter.saveMessage({
+              userId,
+              sessionId: options.sessionId,
+              role: 'user',
+              content: options.userPrompt,
+              createdAtUtc: new Date(totalStartTime).toISOString(),
+            });
+
+            await this.memoryWriter.saveMessage({
+              userId,
               sessionId: options.sessionId,
               role: 'assistant',
               content: finalText,
@@ -381,7 +418,8 @@ export class ChatOrchestrator {
               options.userPrompt,
               finalText,
               this.memoryWriter,
-              new Date().toISOString()
+              new Date().toISOString(),
+              userId
             ).catch((err) => {
               console.warn('[Orchestrator] Async fact compaction warning:', err);
             });

@@ -12,30 +12,32 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const sessionId = url.searchParams.get('sessionId') || undefined;
   const traceId = url.searchParams.get('traceId') || undefined;
+  const userId = url.searchParams.get('userId') || 'usr_evaluator';
   const limit = parseInt(url.searchParams.get('limit') || '20', 10);
 
   const logger = new SQLiteTraceLogger();
 
   if (traceId) {
-    const trace = await logger.getTraceById(traceId);
+    const trace = await logger.getTraceById(traceId, userId);
     if (!trace) {
       return NextResponse.json({ error: 'Trace not found' }, { status: 404 });
     }
     return NextResponse.json({ trace });
   }
 
-  const traces = await logger.getTraces(sessionId, limit);
+  const traces = await logger.getTraces(sessionId, limit, userId);
 
-  // Retrieve recent historical messages and facts from SQLite
+  // Retrieve recent historical messages and facts from SQLite for this user
   const db = getDatabase();
   const recentMessages = db
     .prepare(
       `SELECT session_id, role, content, created_at_utc
        FROM messages
+       WHERE user_id = ?
        ORDER BY created_at_utc DESC
        LIMIT 50`
     )
-    .all() as Array<{
+    .all(userId) as Array<{
       session_id: string;
       role: string;
       content: string;
@@ -46,10 +48,11 @@ export async function GET(req: Request) {
     .prepare(
       `SELECT id, session_id, fact_text, entities_json, reference_date_utc
        FROM session_facts
+       WHERE user_id = ?
        ORDER BY reference_date_utc DESC
        LIMIT 50`
     )
-    .all() as Array<{
+    .all(userId) as Array<{
       id: string;
       session_id: string;
       fact_text: string;
@@ -58,13 +61,13 @@ export async function GET(req: Request) {
     }>;
 
   const totalTracesCount = (
-    db.prepare(`SELECT COUNT(*) as count FROM turn_traces`).get() as { count: number }
+    db.prepare(`SELECT COUNT(*) as count FROM turn_traces WHERE user_id = ?`).get(userId) as { count: number }
   ).count;
   const totalMessagesCount = (
-    db.prepare(`SELECT COUNT(*) as count FROM messages`).get() as { count: number }
+    db.prepare(`SELECT COUNT(*) as count FROM messages WHERE user_id = ?`).get(userId) as { count: number }
   ).count;
   const totalFactsCount = (
-    db.prepare(`SELECT COUNT(*) as count FROM session_facts`).get() as { count: number }
+    db.prepare(`SELECT COUNT(*) as count FROM session_facts WHERE user_id = ?`).get(userId) as { count: number }
   ).count;
 
   return NextResponse.json({

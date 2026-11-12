@@ -15,6 +15,7 @@ export interface TemporalWindow {
 
 export interface MemoryMessage {
   id: string;
+  userId?: string;
   sessionId: string;
   role: 'user' | 'assistant' | 'system';
   content: string;
@@ -24,11 +25,20 @@ export interface MemoryMessage {
 
 export interface SessionFact {
   id: string;
+  userId?: string;
   sessionId: string;
   factText: string;
   entitiesJson: string; // JSON serialized string array e.g. '["HubSpot", "Attio"]'
   referenceDateUtc: string;
   embedding?: Float32Array;
+}
+
+export interface SessionRecord {
+  id: string;
+  userId: string;
+  title: string;
+  createdAtUtc: string;
+  updatedAtUtc: string;
 }
 
 export type MemoryRecallStatus =
@@ -50,14 +60,18 @@ export interface RecalledContext {
 export interface IMemoryReader {
   /**
    * Performs hybrid RRF search across temporal window, FTS5 lexical BM25,
-   * and in-process vector cosine similarity.
+   * and in-process vector cosine similarity, strictly isolated by userId.
    */
-  recallContext(query: string, temporalWindow?: TemporalWindow): Promise<RecalledContext>;
+  recallContext(
+    query: string,
+    temporalWindow?: TemporalWindow,
+    userId?: string
+  ): Promise<RecalledContext>;
 
   /**
-   * Retrieves messages for a specific session ID ordered by creation time.
+   * Retrieves messages for a specific session ID ordered by creation time, isolated by userId.
    */
-  getRecentSession(sessionId: string): Promise<MemoryMessage[]>;
+  getRecentSession(sessionId: string, userId?: string): Promise<MemoryMessage[]>;
 }
 
 export interface IMemoryWriter {

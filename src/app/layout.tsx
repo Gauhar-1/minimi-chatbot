@@ -15,7 +15,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className="dark">
-      <body className="min-h-screen bg-[#0a0d14] text-slate-100 antialiased selection:bg-indigo-500 selection:text-white">
+      <body className="min-h-screen bg-[#09090b] text-[#f4f4f5] antialiased selection:bg-zinc-700 selection:text-white">
         <ChatErrorBoundary>
           {children}
         </ChatErrorBoundary>

@@ -12,33 +12,38 @@ export interface ChallengePrompt {
   label: string;
   prompt: string;
   isGuard?: boolean;
+  invariantDescription?: string;
 }
 
 export const MINIMI_CHALLENGE_PROMPTS: ChallengePrompt[] = [
   {
     id: 'monday_crm',
-    label: 'Monday: 5 CRM Tools Pricing Delta',
+    label: 'CRM Pricing Delta',
     prompt:
       'On Monday we shortlisted 5 CRM tools for a 20-person sales team. Has any of them changed pricing or shipped something big since?',
+    invariantDescription: '[Tests: chrono-node + 5x Parallel Search]',
   },
   {
     id: 'nov3_vectordb',
-    label: '3 November: Verifiable Baseline',
+    label: 'Nov 3 Verification',
     prompt:
       'What did I ask you on 3 November? Is your answer still correct today?',
+    invariantDescription: '[Tests: Past nov3 Anchor + Episodic Baseline]',
   },
   {
     id: 'tuesday_postgres',
-    label: 'Last Tuesday: Postgres Hosting Plans',
+    label: 'Postgres Hosting',
     prompt:
       'Last Tuesday I asked you about Postgres hosting. Has any pricing changed since then?',
+    invariantDescription: '[Tests: Tuesday Anchor + Readability Scraper]',
   },
   {
     id: 'empty_guard',
-    label: '19 August: Empty Recall Guard (Test)',
+    label: '19 Aug Memory Check',
     prompt:
       'What did I ask you on 19 August? Is your answer still correct?',
     isGuard: true,
+    invariantDescription: '[Tests: EMPTY_FOR_DATE_WINDOW Guard]',
   },
 ];
 
@@ -47,8 +52,10 @@ interface ChatViewportProps {
   isLoading: boolean;
   activeEvents: PipelinePhaseEvent[];
   latestTrace: TurnTracePayload | null;
+  devMode?: boolean;
   onOpenTrace: () => void;
   onSelectPrompt: (prompt: string) => void;
+  onRetryTurn?: () => void;
 }
 
 function ChatViewportComponent({
@@ -56,8 +63,10 @@ function ChatViewportComponent({
   isLoading,
   activeEvents,
   latestTrace,
+  devMode = false,
   onOpenTrace,
   onSelectPrompt,
+  onRetryTurn,
 }: ChatViewportProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -85,50 +94,38 @@ function ChatViewportComponent({
 
   if (messages.length === 0) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-slate-400 max-w-3xl mx-auto w-full">
-        <div className="w-14 h-14 rounded-2xl bg-indigo-600/10 border border-indigo-500/25 flex items-center justify-center mb-4 text-indigo-400 shadow-lg shadow-indigo-950/50">
-          <Bot className="w-7 h-7" />
+      <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-zinc-400 max-w-3xl mx-auto w-full">
+        <div className="w-12 h-12 rounded-2xl bg-zinc-900 border border-white/[0.08] flex items-center justify-center mb-4 text-zinc-200 shadow-lg shadow-black/40">
+          <Bot className="w-6 h-6" />
         </div>
-        <h2 className="text-xl font-bold text-white mb-2 tracking-tight">
-          Minimi Temporal Web-Search Agent
+        <h2 className="text-xl font-semibold text-[#f4f4f5] mb-2 tracking-tight">
+          Where would you like to start?
         </h2>
-        <p className="text-xs max-w-lg text-slate-400 leading-relaxed mb-8">
-          Pre-inference temporal reasoning via <code className="text-indigo-300 font-mono">chrono-node</code>,
-          episodic memory with SQLite <code className="text-indigo-300 font-mono">FTS5</code> + local embeddings,
-          and strictly single-tool agentic loop (<code className="text-indigo-300 font-mono">web_search</code>) with deep pricing table extraction.
+        <p className="text-xs max-w-md text-zinc-400 leading-relaxed mb-8">
+          Search with temporal awareness, recall episodic memories, and verify SaaS pricing and technical changes.
         </p>
 
-        {/* Challenge Prompts Grid on Empty State */}
+        {/* 2x2 Grid of Starter Prompt Cards */}
         <div className="w-full text-left space-y-3">
-          <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-300 uppercase tracking-wider pl-1">
-            <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-            <span>Select a Minimi Challenge Test Prompt:</span>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {MINIMI_CHALLENGE_PROMPTS.map((p) => (
               <button
                 key={p.id}
                 onClick={() => onSelectPrompt(p.prompt)}
-                className={`p-3.5 rounded-xl border text-left transition-all duration-150 hover:shadow-lg active:scale-[0.99] group ${
-                  p.isGuard
-                    ? 'bg-amber-950/20 hover:bg-amber-950/40 border-amber-800/40 hover:border-amber-700/60'
-                    : 'bg-slate-900/60 hover:bg-slate-900 border-slate-800 hover:border-indigo-600/60'
-                }`}
+                className={`p-4 rounded-xl border text-left transition-all duration-200 hover:shadow-lg active:scale-[0.99] group bg-[#121215] border-white/[0.08] hover:border-white/[0.18]`}
               >
-                <div className="flex items-center justify-between mb-1">
-                  <span
-                    className={`font-semibold text-xs ${
-                      p.isGuard
-                        ? 'text-amber-300 flex items-center gap-1'
-                        : 'text-indigo-300 group-hover:text-indigo-200'
-                    }`}
-                  >
-                    {p.isGuard && <ShieldAlert className="w-3 h-3 text-amber-400" />}
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="font-medium text-xs text-zinc-200 group-hover:text-white flex items-center gap-1.5">
+                    {p.isGuard && <ShieldAlert className="w-3.5 h-3.5 text-zinc-400" />}
                     {p.label}
                   </span>
+                  {devMode && p.invariantDescription && (
+                    <span className="text-[10px] font-mono text-zinc-400 px-1.5 py-0.5 rounded bg-zinc-900 border border-white/[0.06]">
+                      {p.invariantDescription}
+                    </span>
+                  )}
                 </div>
-                <p className="text-[11px] text-slate-400 line-clamp-2 leading-relaxed">
+                <p className="text-[12px] text-zinc-400 line-clamp-2 leading-relaxed">
                   "{p.prompt}"
                 </p>
               </button>
@@ -155,22 +152,26 @@ function ChatViewportComponent({
             className={`flex gap-3.5 ${isUser ? 'justify-end' : 'justify-start'}`}
           >
             {!isUser && (
-              <div className="w-8 h-8 rounded-xl bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center flex-shrink-0 text-indigo-400 mt-1 shadow-sm">
+              <div className="w-7 h-7 rounded-lg bg-zinc-900 border border-white/[0.08] flex items-center justify-center flex-shrink-0 text-zinc-300 mt-1 shadow-sm">
                 <Bot className="w-4 h-4" />
               </div>
             )}
 
             <div
-              className={`max-w-[88%] sm:max-w-[82%] rounded-2xl p-4 shadow-md ${
+              className={`max-w-[88%] sm:max-w-[82%] rounded-2xl p-4 shadow-sm ${
                 isUser
-                  ? 'bg-indigo-600 text-white rounded-tr-none font-medium text-sm'
-                  : 'bg-slate-900/85 border border-slate-800 text-slate-200 rounded-tl-none'
+                  ? 'bg-zinc-800 text-white rounded-tr-none font-normal text-sm'
+                  : 'bg-[#121215] border border-white/[0.08] text-[#f4f4f5] rounded-tl-none'
               }`}
             >
               {/* Show live pipeline stepper during turn generation */}
-              {isLastAssistant && isLoading && activeEvents.length > 0 && (
+              {isLastAssistant && (isLoading || activeEvents.length > 0) && (
                 <div className="mb-3">
-                  <PipelineStepper events={activeEvents} isStreaming={isLoading} />
+                  <PipelineStepper
+                    events={activeEvents}
+                    isStreaming={isLoading}
+                    devMode={devMode}
+                  />
                 </div>
               )}
 
@@ -196,49 +197,49 @@ function ChatViewportComponent({
                     }
 
                     if (isLoading && isLastAssistant) {
-                      return (
-                        <div className="flex items-center gap-2 py-2 text-xs text-indigo-400 animate-pulse">
-                          <span>Synthesizing verified markdown comparison...</span>
-                        </div>
-                      );
+                      return null;
                     }
 
+                    // Zero error leak recovery card
                     return (
-                      <div className="p-3 rounded-xl bg-amber-950/40 border border-amber-800/50 text-amber-300 text-xs flex items-center justify-between">
-                        <span>No synthesis returned for this turn.</span>
+                      <div className="p-3.5 rounded-xl bg-zinc-900/60 border border-white/[0.08] text-xs flex items-center justify-between text-zinc-300">
+                        <span>I hit a brief connection snag while verifying those sources.</span>
                         <button
-                          onClick={() => onSelectPrompt(messages[idx - 1]?.content || '')}
-                          className="px-2 py-1 bg-amber-900/60 hover:bg-amber-800 rounded font-medium text-[11px] text-amber-200 transition-colors"
+                          onClick={() => {
+                            if (onRetryTurn) onRetryTurn();
+                            else onSelectPrompt(messages[idx - 1]?.content || '');
+                          }}
+                          className="px-3 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-white/[0.08] rounded-md font-medium text-[11px] transition-colors"
                         >
-                          Retry Turn
+                          Retry
                         </button>
                       </div>
                     );
                   })()}
 
-                  {/* Trace details bar */}
-                  {latestTrace && isLastAssistant && (
-                    <div className="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400">
+                  {/* Dev Mode Trace Details Bar */}
+                  {devMode && latestTrace && isLastAssistant && (
+                    <div className="mt-4 pt-3 border-t border-white/[0.06] flex items-center justify-between text-[11px] text-zinc-400 font-mono">
                       <div className="flex items-center gap-2">
-                        <span className="font-mono text-emerald-400 font-semibold">
+                        <span className="text-emerald-400 font-semibold tabular-nums">
                           {latestTrace.latencies?.totalMs || 0}ms total
                         </span>
                         {latestTrace.temporalResolution && (
-                          <span className="px-1.5 py-0.5 rounded bg-slate-800 text-indigo-300 font-mono text-[10px]">
+                          <span className="px-1.5 py-0.5 rounded bg-zinc-900 text-zinc-300 text-[10px] border border-white/[0.06]">
                             {latestTrace.temporalResolution.raw}
                           </span>
                         )}
                         {latestTrace.latencies.ttftMs && (
-                          <span className="text-[10px] text-slate-500 font-mono">
+                          <span className="text-[10px] text-zinc-500 tabular-nums">
                             TTFT: {latestTrace.latencies.ttftMs}ms
                           </span>
                         )}
                       </div>
                       <button
                         onClick={onOpenTrace}
-                        className="inline-flex items-center gap-1 text-indigo-400 hover:text-indigo-300 font-medium hover:underline transition-colors"
+                        className="inline-flex items-center gap-1 text-zinc-300 hover:text-white transition-colors"
                       >
-                        <Activity className="w-3.5 h-3.5" />
+                        <Activity className="w-3.5 h-3.5 text-indigo-400" />
                         <span>Inspect X-Ray</span>
                       </button>
                     </div>
@@ -248,7 +249,7 @@ function ChatViewportComponent({
             </div>
 
             {isUser && (
-              <div className="w-8 h-8 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center flex-shrink-0 text-slate-300 mt-1 shadow-sm">
+              <div className="w-7 h-7 rounded-lg bg-zinc-800 border border-white/[0.08] flex items-center justify-center flex-shrink-0 text-zinc-300 mt-1 shadow-sm">
                 <User className="w-4 h-4" />
               </div>
             )}
@@ -262,7 +263,7 @@ function ChatViewportComponent({
       {isUserScrolledUp && (
         <button
           onClick={scrollToBottom}
-          className="sticky bottom-4 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-indigo-600/90 hover:bg-indigo-600 text-white shadow-xl text-xs font-medium border border-indigo-400/40 backdrop-blur-sm transition-all"
+          className="sticky bottom-4 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-zinc-800/90 hover:bg-zinc-800 text-white shadow-xl text-xs font-medium border border-white/[0.1] backdrop-blur-sm transition-all"
         >
           <ArrowDown className="w-3.5 h-3.5" />
           <span>Jump to Latest</span>

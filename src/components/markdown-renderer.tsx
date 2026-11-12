@@ -20,14 +20,14 @@ function extractDomain(href?: string): string {
 
 function MarkdownRendererComponent({ content }: MarkdownRendererProps) {
   return (
-    <div className="markdown-body prose prose-invert max-w-none text-slate-200 text-sm leading-relaxed space-y-3">
+    <div className="markdown-body prose prose-invert max-w-none text-[#f4f4f5] text-sm leading-relaxed space-y-3">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
           table({ children }) {
             return (
-              <div className="overflow-x-auto my-4 rounded-xl border border-slate-700/80 bg-slate-950/90 shadow-xl">
-                <table className="min-w-full divide-y divide-slate-700/80 text-left text-xs sm:text-sm">
+              <div className="overflow-x-auto my-4 rounded-xl border border-white/[0.08] bg-zinc-900/50 shadow-xl overflow-hidden">
+                <table className="min-w-full divide-y divide-white/[0.08] text-left text-xs sm:text-sm">
                   {children}
                 </table>
               </div>
@@ -35,35 +35,35 @@ function MarkdownRendererComponent({ content }: MarkdownRendererProps) {
           },
           thead({ children }) {
             return (
-              <thead className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 text-slate-200 font-semibold uppercase tracking-wider text-[11px] border-b border-slate-700/80">
+              <thead className="bg-zinc-900/80 text-zinc-400 font-semibold uppercase tracking-wider text-[11px] border-b border-white/[0.08]">
                 {children}
               </thead>
             );
           },
           tbody({ children }) {
             return (
-              <tbody className="divide-y divide-slate-800/80 bg-slate-950/50">
+              <tbody className="divide-y divide-white/[0.05] bg-zinc-950/40">
                 {children}
               </tbody>
             );
           },
           tr({ children }) {
             return (
-              <tr className="hover:bg-slate-800/40 odd:bg-slate-900/30 even:bg-slate-900/10 transition-colors">
+              <tr className="hover:bg-white/[0.03] transition-colors">
                 {children}
               </tr>
             );
           },
           th({ children }) {
             return (
-              <th className="px-4 py-3 font-semibold text-slate-200 whitespace-nowrap">
+              <th className="px-4 py-3 font-semibold text-zinc-400 whitespace-nowrap">
                 {children}
               </th>
             );
           },
           td({ children }) {
             return (
-              <td className="px-4 py-3 text-slate-300 align-top leading-relaxed">
+              <td className="px-4 py-3 text-zinc-200 align-top leading-relaxed tabular-nums">
                 {children}
               </td>
             );
@@ -75,12 +75,14 @@ function MarkdownRendererComponent({ content }: MarkdownRendererProps) {
                 href={href}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 px-2 py-0.5 my-0.5 rounded-full bg-slate-800/90 hover:bg-indigo-950/80 text-indigo-300 hover:text-indigo-200 border border-slate-700/60 hover:border-indigo-600/60 font-mono text-xs transition-colors duration-150 align-baseline no-underline group shadow-sm"
+                className="inline-flex items-center gap-1 px-2 py-0.5 my-0.5 rounded-md bg-white/[0.06] hover:bg-white/[0.12] text-xs text-zinc-200 transition-colors align-baseline no-underline group shadow-sm border border-white/[0.04]"
                 title={href}
               >
-                <span className="font-sans font-medium text-slate-200">{children}</span>
+                <span className="font-sans font-medium text-zinc-200">
+                  {children || domain}
+                </span>
                 {domain && (
-                  <span className="text-[10px] text-slate-400 group-hover:text-indigo-300">
+                  <span className="text-[10px] text-zinc-400 group-hover:text-zinc-200">
                     ({domain})
                   </span>
                 )}
@@ -93,23 +95,23 @@ function MarkdownRendererComponent({ content }: MarkdownRendererProps) {
           },
           code({ children }) {
             return (
-              <code className="px-1.5 py-0.5 bg-slate-800/80 rounded text-indigo-300 text-xs font-mono border border-slate-700/40">
+              <code className="px-1.5 py-0.5 bg-zinc-900 rounded text-zinc-300 text-xs font-mono border border-white/[0.08]">
                 {children}
               </code>
             );
           },
           ul({ children }) {
-            return <ul className="list-disc pl-5 space-y-1.5 my-2 text-slate-300">{children}</ul>;
+            return <ul className="list-disc pl-5 space-y-1.5 my-2 text-zinc-300">{children}</ul>;
           },
           ol({ children }) {
-            return <ol className="list-decimal pl-5 space-y-1.5 my-2 text-slate-300">{children}</ol>;
+            return <ol className="list-decimal pl-5 space-y-1.5 my-2 text-zinc-300">{children}</ol>;
           },
           li({ children }) {
             return <li className="leading-relaxed">{children}</li>;
           },
           blockquote({ children }) {
             return (
-              <blockquote className="border-l-4 border-indigo-500/80 pl-4 py-1 italic bg-indigo-950/20 rounded-r-lg my-2 text-slate-300">
+              <blockquote className="border-l-2 border-indigo-500/80 pl-4 py-1 italic bg-indigo-950/20 rounded-r-lg my-2 text-zinc-300">
                 {children}
               </blockquote>
             );

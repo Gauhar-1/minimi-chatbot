@@ -16,19 +16,69 @@ import type { PipelinePhaseEvent } from '@/core/contracts/trace.contract';
 interface PipelineStepperProps {
   events: PipelinePhaseEvent[];
   isStreaming?: boolean;
+  devMode?: boolean;
 }
 
-function PipelineStepperComponent({ events, isStreaming }: PipelineStepperProps) {
+function PipelineStepperComponent({
+  events,
+  isStreaming,
+  devMode = false,
+}: PipelineStepperProps) {
   if (!events || events.length === 0) {
     if (!isStreaming) return null;
     return (
-      <div className="flex items-center gap-2 py-2 px-3 bg-slate-900/80 border border-slate-800 rounded-xl text-xs text-slate-400 animate-pulse">
-        <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-400" />
-        <span>Initializing temporal grounding pipeline...</span>
+      <div className="inline-flex items-center gap-2 py-1.5 px-3 rounded-full bg-zinc-900/70 border border-white/[0.08] text-xs text-zinc-400 backdrop-blur-sm animate-pulse">
+        <span className="w-1.5 h-1.5 rounded-full bg-zinc-400 animate-ping" />
+        <span>Thinking...</span>
       </div>
     );
   }
 
+  // Active or latest completed event
+  const latestEvent = events[events.length - 1];
+
+  // =========================================================================
+  // USER MODE (devMode === false): Calm, single-pill morphing status indicator
+  // =========================================================================
+  if (!devMode) {
+    // Human micro-copy mapping
+    let humanCopy = 'Working on your answer...';
+    if (latestEvent.phase === 'temporal_parse' || latestEvent.phase === 'memory_recall') {
+      humanCopy = 'Checking our past conversation...';
+    } else if (latestEvent.phase === 'search_fanout') {
+      humanCopy = 'Searching the web for recent updates...';
+    } else if (latestEvent.phase === 'deep_scrape') {
+      humanCopy = 'Reading live pricing & changelog pages...';
+    } else if (latestEvent.phase === 'tpm_pacing' || latestEvent.phase === 'response_synthesis') {
+      humanCopy = 'Synthesizing comparison...';
+    }
+
+    if (!isStreaming) {
+      const searchEvents = events.filter((e) => e.phase === 'search_fanout' || e.phase === 'deep_scrape');
+      return (
+        <div className="flex items-center gap-1.5 text-[11px] text-zinc-500 font-medium my-1">
+          <CheckCircle2 className="w-3 h-3 text-zinc-400" />
+          <span>
+            {searchEvents.length > 0 ? 'Verified across live sources' : 'Answered from conversation context'}
+          </span>
+        </div>
+      );
+    }
+
+    return (
+      <div className="inline-flex items-center gap-2 py-1.5 px-3 rounded-full bg-zinc-900/80 border border-white/[0.08] text-xs text-zinc-300 shadow-sm backdrop-blur-md transition-all duration-300">
+        <span className="relative flex h-2 w-2">
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75" />
+          <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500" />
+        </span>
+        <span className="font-medium tracking-tight">{humanCopy}</span>
+      </div>
+    );
+  }
+
+  // =========================================================================
+  // DEV MODE (devMode === true): Full 4-stage technical Telemetry Stepper
+  // =========================================================================
   const stages = [
     {
       id: 'temporal_parse',
@@ -66,11 +116,8 @@ function PipelineStepperComponent({ events, isStreaming }: PipelineStepperProps)
       : []),
   ];
 
-  // Active or latest completed event
-  const latestEvent = events[events.length - 1];
-
   return (
-    <div className="flex flex-col gap-2.5 my-2 p-3 bg-slate-950/80 border border-slate-800/90 rounded-xl shadow-md text-xs backdrop-blur-sm">
+    <div className="flex flex-col gap-2.5 my-2 p-3 bg-[#121215]/90 border border-white/[0.08] rounded-xl shadow-md text-xs backdrop-blur-sm">
       <div className="flex flex-wrap items-center gap-2">
         {stages.map((stage) => {
           const Icon = stage.icon;
@@ -79,7 +126,7 @@ function PipelineStepperComponent({ events, isStreaming }: PipelineStepperProps)
           const isCompleted = ev?.status === 'completed';
           const isFailed = ev?.status === 'failed';
 
-          let containerClass = 'bg-slate-900/50 text-slate-500 border-slate-800/60';
+          let containerClass = 'bg-zinc-900/60 text-zinc-500 border-white/[0.05]';
           if (isStarted) {
             containerClass =
               'bg-indigo-950/80 text-indigo-300 border-indigo-700/60 shadow-sm shadow-indigo-950 animate-pulse';
@@ -108,7 +155,7 @@ function PipelineStepperComponent({ events, isStreaming }: PipelineStepperProps)
                 <AlertCircle className="w-3 h-3 text-rose-400 ml-0.5" />
               )}
               {ev?.durationMs !== undefined && (
-                <span className="text-[10px] font-mono opacity-80 ml-0.5">
+                <span className="text-[10px] font-mono tabular-nums opacity-80 ml-0.5">
                   {ev.durationMs}ms
                 </span>
               )}
@@ -117,15 +164,15 @@ function PipelineStepperComponent({ events, isStreaming }: PipelineStepperProps)
         })}
       </div>
 
-      {/* Live status detail line */}
+      {/* Live status detail line in Dev Mode */}
       {latestEvent && (
-        <div className="flex items-center gap-1.5 text-[11px] font-mono text-slate-300 border-t border-slate-800/60 pt-2 px-0.5">
+        <div className="flex items-center gap-1.5 text-[11px] font-mono text-zinc-300 border-t border-white/[0.06] pt-2 px-0.5">
           <span className="text-indigo-400 font-semibold uppercase text-[10px]">
             [{latestEvent.phase}]
           </span>
           <span className="truncate">{latestEvent.detail}</span>
           {latestEvent.durationMs !== undefined && (
-            <span className="text-slate-500 ml-auto flex-shrink-0">
+            <span className="text-zinc-500 ml-auto flex-shrink-0 tabular-nums">
               ({latestEvent.durationMs}ms)
             </span>
           )}

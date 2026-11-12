@@ -80,12 +80,19 @@ function ChatViewportComponent({
     setIsUserScrolledUp(distanceToBottom > 120);
   };
 
-  // Auto-scroll pinning to bottom during streaming unless user scrolled up
+  // Auto-scroll pinning to bottom during streaming unless user explicitly scrolled up
   useEffect(() => {
-    if (!isUserScrolledUp) {
-      bottomRef.current?.scrollIntoView({ behavior: 'auto' });
-    }
-  }, [messages.length, (messages[messages.length - 1]?.content || '').length, activeEvents.length, isUserScrolledUp]);
+    if (isUserScrolledUp) return;
+    const scrollContainer = scrollContainerRef.current;
+    if (!scrollContainer) return;
+
+    // Use requestAnimationFrame to avoid synchronous layout thrashing / update cascades
+    const rafId = requestAnimationFrame(() => {
+      scrollContainer.scrollTop = scrollContainer.scrollHeight;
+    });
+
+    return () => cancelAnimationFrame(rafId);
+  }, [messages, activeEvents, isUserScrolledUp]);
 
   const scrollToBottom = () => {
     setIsUserScrolledUp(false);

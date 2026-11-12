@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useId } from 'react';
+import React, { useState, useEffect, useId, useRef } from 'react';
 import { useChat } from '@ai-sdk/react';
 import {
   ChatViewport,
@@ -29,6 +29,10 @@ export default function ChatPage() {
   const [isReseeding, setIsReseeding] = useState(false);
   const [reseedMessage, setReseedMessage] = useState<string | null>(null);
   const [chatError, setChatError] = useState<string | null>(null);
+
+  // Track the number of processed data items to prevent redundant re-renders
+  const processedDataLengthRef = useRef<number>(0);
+  const prevEventsSigRef = useRef<string>('');
 
   // Sync devMode with localStorage
   useEffect(() => {
@@ -70,6 +74,8 @@ export default function ChatPage() {
     onResponse: () => {
       setActiveEvents([]);
       setChatError(null);
+      processedDataLengthRef.current = 0;
+      prevEventsSigRef.current = '';
     },
     onError: (err) => {
       console.error('[useChat] Error caught:', err);
@@ -85,35 +91,56 @@ export default function ChatPage() {
     setActiveEvents([]);
     setLatestTrace(null);
     setChatError(null);
+    processedDataLengthRef.current = 0;
+    prevEventsSigRef.current = '';
   };
 
   // Parse custom stream data (pipeline phases and turn traces)
+  // Stabilized to prevent "Maximum update depth exceeded" during token streaming
   useEffect(() => {
-    if (data && data.length > 0) {
-      const events: PipelinePhaseEvent[] = [];
-      let foundTrace: TurnTracePayload | null = null;
+    if (!data || data.length === 0) {
+      if (processedDataLengthRef.current > 0) {
+        processedDataLengthRef.current = 0;
+        prevEventsSigRef.current = '';
+        setActiveEvents([]);
+      }
+      return;
+    }
 
-      for (const item of data) {
-        if (typeof item === 'object' && item !== null) {
-          const obj = item as Record<string, unknown>;
-          if (obj.type === 'phase') {
-            events.push(obj as unknown as PipelinePhaseEvent);
-          } else if (obj.type === 'trace_complete' && obj.trace) {
-            foundTrace = obj.trace as TurnTracePayload;
-          }
+    // Only inspect newly arrived or changed data elements
+    if (data.length === processedDataLengthRef.current) {
+      return;
+    }
+    processedDataLengthRef.current = data.length;
+
+    const events: PipelinePhaseEvent[] = [];
+    let foundTrace: TurnTracePayload | null = null;
+
+    for (const item of data) {
+      if (typeof item === 'object' && item !== null) {
+        const obj = item as Record<string, unknown>;
+        if (obj.type === 'phase') {
+          events.push(obj as unknown as PipelinePhaseEvent);
+        } else if (obj.type === 'trace_complete' && obj.trace) {
+          foundTrace = obj.trace as TurnTracePayload;
         }
       }
+    }
 
+    // Only update activeEvents if the serialized signature of phase events actually changed
+    const currentSig = events.map((e) => `${e.phase}:${e.status}:${e.durationMs ?? 0}`).join('|');
+    if (currentSig !== prevEventsSigRef.current) {
+      prevEventsSigRef.current = currentSig;
       setActiveEvents(events);
+    }
 
-      if (foundTrace) {
-        const trace = foundTrace;
-        setLatestTrace((prev) => (prev?.traceId === trace.traceId ? prev : trace));
-        setAllTraces((prev) => {
-          if (prev.some((t) => t.traceId === trace.traceId)) return prev;
-          return [trace, ...prev];
-        });
-      }
+    if (foundTrace) {
+      const trace = foundTrace;
+      setLatestTrace((prev) => (prev?.traceId === trace.traceId ? prev : trace));
+      setAllTraces((prev) => {
+        if (prev.some((t) => t.traceId === trace.traceId)) return prev;
+        return [trace, ...prev];
+      });
     }
   }, [data]);
 

@@ -57,22 +57,29 @@ export default function ChatPage() {
   useEffect(() => {
     if (data && data.length > 0) {
       const events: PipelinePhaseEvent[] = [];
+      let foundTrace: TurnTracePayload | null = null;
+
       for (const item of data) {
         if (typeof item === 'object' && item !== null) {
           const obj = item as Record<string, unknown>;
           if (obj.type === 'phase') {
             events.push(obj as unknown as PipelinePhaseEvent);
           } else if (obj.type === 'trace_complete' && obj.trace) {
-            const trace = obj.trace as TurnTracePayload;
-            setLatestTrace(trace);
-            setAllTraces((prev) => {
-              if (prev.some((t) => t.traceId === trace.traceId)) return prev;
-              return [trace, ...prev];
-            });
+            foundTrace = obj.trace as TurnTracePayload;
           }
         }
       }
+
       setActiveEvents(events);
+
+      if (foundTrace) {
+        const trace = foundTrace;
+        setLatestTrace((prev) => (prev?.traceId === trace.traceId ? prev : trace));
+        setAllTraces((prev) => {
+          if (prev.some((t) => t.traceId === trace.traceId)) return prev;
+          return [trace, ...prev];
+        });
+      }
     }
   }, [data]);
 

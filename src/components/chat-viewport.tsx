@@ -74,9 +74,9 @@ function ChatViewportComponent({
   // Auto-scroll pinning to bottom during streaming unless user scrolled up
   useEffect(() => {
     if (!isUserScrolledUp) {
-      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+      bottomRef.current?.scrollIntoView({ behavior: 'auto' });
     }
-  }, [messages, activeEvents, isUserScrolledUp]);
+  }, [messages.length, (messages[messages.length - 1]?.content || '').length, activeEvents.length, isUserScrolledUp]);
 
   const scrollToBottom = () => {
     setIsUserScrolledUp(false);
